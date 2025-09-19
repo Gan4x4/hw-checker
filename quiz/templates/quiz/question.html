@@ -1,0 +1,116 @@
+{% extends "quiz/base.html" %}
+
+{% block title %}Question {{ question_number }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .timer {
+        display: flex;
+        justify-content: flex-end;
+        font-weight: 600;
+        color: #ef476f;
+        margin-bottom: 12px;
+    }
+    .question-image {
+        border: 1px solid #dcdfe8;
+        border-radius: 12px;
+        overflow: hidden;
+        margin-bottom: 24px;
+        background: #f9fafc;
+    }
+    .question-image img {
+        display: block;
+        width: 100%;
+        height: auto;
+    }
+    .answers {
+        display: grid;
+        gap: 12px;
+    }
+    .answer {
+        border: 1px solid #d0d7ea;
+        background: #fff;
+        padding: 14px 18px;
+        border-radius: 10px;
+        text-align: left;
+        cursor: pointer;
+        transition: border-color 0.2s ease, transform 0.1s ease;
+        color: #1d1f27;
+        font-weight: 500;
+    }
+    .answer:hover {
+        border-color: #4563ff;
+        transform: translateY(-1px);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>Question {{ question_number }} of {{ total_questions }}</h1>
+<div class="timer">Time left: <span id="countdown">{{ timeout_seconds }}</span>s</div>
+<div class="question-image">
+    <img src="{{ image_url }}" alt="Question prompt">
+</div>
+<form method="post" id="answer-form">
+    {% csrf_token %}
+    <input type="hidden" name="question_id" value="{{ question.id }}">
+    <input type="hidden" name="image_path" value="{{ image_path }}">
+    <input type="hidden" name="selected_answer" id="selected-answer">
+    <input type="hidden" name="time_spent" id="time-spent">
+    <div class="answers">
+        {% for idx, answer in answers %}
+        <button type="button" class="answer" data-index="{{ idx }}">{{ answer }}</button>
+        {% endfor %}
+    </div>
+    <p class="muted" style="margin-top:16px;">You have {{ timeout_seconds }} seconds to choose an answer. If time expires, the question is recorded without a response.</p>
+</form>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(() => {
+    const timeout = {{ timeout_seconds }};
+    const countdownEl = document.getElementById('countdown');
+    const form = document.getElementById('answer-form');
+    const selectedInput = document.getElementById('selected-answer');
+    const timeSpentInput = document.getElementById('time-spent');
+    const startTime = Date.now();
+
+    function submitForm() {
+        if (!form.dataset.submitted) {
+            const elapsedSeconds = Math.round((Date.now() - startTime) / 1000);
+            timeSpentInput.value = elapsedSeconds;
+            form.dataset.submitted = 'true';
+            form.submit();
+        }
+    }
+
+    document.querySelectorAll('.answer').forEach((button) => {
+        button.addEventListener('click', () => {
+            selectedInput.value = button.dataset.index;
+            submitForm();
+        });
+    });
+
+    let remaining = timeout;
+    countdownEl.textContent = remaining;
+    const intervalId = setInterval(() => {
+        remaining -= 1;
+        countdownEl.textContent = Math.max(remaining, 0);
+        if (remaining <= 0) {
+            clearInterval(intervalId);
+            selectedInput.value = '';
+            submitForm();
+        }
+    }, 1000);
+
+    form.addEventListener('submit', () => {
+        if (!form.dataset.submitted) {
+            const elapsedSeconds = Math.round((Date.now() - startTime) / 1000);
+            timeSpentInput.value = elapsedSeconds;
+            form.dataset.submitted = 'true';
+        }
+    });
+})();
+</script>
+{% endblock %}

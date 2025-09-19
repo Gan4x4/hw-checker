@@ -1,0 +1,10 @@
+{% extends "admin/change_list.html" %}
+
+{% block object-tools-items %}
+    <li>
+        <a href="{% url 'admin:quiz_quizlink_import' %}" class="addlink">
+            Import quiz from JSON
+        </a>
+    </li>
+    {{ block.super }}
+{% endblock %}

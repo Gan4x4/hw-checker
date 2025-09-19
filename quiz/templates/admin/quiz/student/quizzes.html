@@ -1,0 +1,50 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Completed quizzes" %} - {{ student.name }}{% endblock %}
+
+{% block content %}
+<div class="student-quizzes" style="max-width: 1024px;">
+    <h1>{% trans "Completed quizzes" %}</h1>
+    <p class="muted">{{ student.name }} · {{ student.email }}</p>
+
+    <table style="width:100%; border-collapse:collapse; background:#fff; border:1px solid #e2e8f0;">
+        <thead>
+            <tr style="background:#f8fafc;">
+                <th style="text-align:left; padding:10px 12px; border-bottom:1px solid #e2e8f0;">{% trans "Quiz" %}</th>
+                <th style="text-align:left; padding:10px 12px; border-bottom:1px solid #e2e8f0;">{% trans "Completed" %}</th>
+                <th style="text-align:left; padding:10px 12px; border-bottom:1px solid #e2e8f0;">{% trans "Questions" %}</th>
+                <th style="text-align:left; padding:10px 12px; border-bottom:1px solid #e2e8f0;">{% trans "Answered" %}</th>
+                <th style="text-align:left; padding:10px 12px; border-bottom:1px solid #e2e8f0;">{% trans "Correct" %}</th>
+                <th style="text-align:left; padding:10px 12px; border-bottom:1px solid #e2e8f0;">{% trans "Score" %}</th>
+                <th style="text-align:left; padding:10px 12px; border-bottom:1px solid #e2e8f0;">{% trans "Unanswered weight" %}</th>
+                <th style="text-align:left; padding:10px 12px; border-bottom:1px solid #e2e8f0;">{% trans "Actions" %}</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for row in rows %}
+            <tr style="border-bottom:1px solid #f1f5f9;">
+                <td style="padding:12px;">{{ row.quiz.title|default:row.quiz.token }}</td>
+                <td style="padding:12px;">{{ row.quiz.completed_at|date:"Y-m-d H:i" }}</td>
+                <td style="padding:12px;">{{ row.total_questions }}</td>
+                <td style="padding:12px;">{{ row.answered }}</td>
+                <td style="padding:12px;">{{ row.correct }}</td>
+                <td style="padding:12px;">{% if row.score_percent is not None %}{{ row.score_percent|floatformat:0 }}%{% else %}—{% endif %}</td>
+                <td style="padding:12px;">{{ row.unanswered_weight|floatformat:2 }}</td>
+                <td style="padding:12px;">
+                    <a class="button" href="{% url 'admin:quiz_quizlink_results' row.quiz.pk %}">{% trans "View" %}</a>
+                </td>
+            </tr>
+        {% empty %}
+            <tr>
+                <td colspan="8" style="padding:16px; text-align:center; color:#64748b;">{% trans "No quizzes found for this student." %}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+    <p style="margin-top:16px;">
+        <a class="button" href="{% url 'admin:quiz_student_changelist' %}">&larr; {% trans "Back to students" %}</a>
+    </p>
+</div>
+{% endblock %}

@@ -1,0 +1,14 @@
+{% extends "quiz/base.html" %}
+
+{% block title %}Start Quiz{% endblock %}
+
+{% block content %}
+<h1>{{ quiz.title|default:"Quiz" }}</h1>
+<p class="muted">When you press start, the timer begins and the first question appears. Make sure you are ready before continuing.</p>
+
+<form method="post" style="margin-top:24px;">
+    {% csrf_token %}
+    <input type="hidden" name="start_quiz" value="1">
+    <button type="submit">Start quiz</button>
+</form>
+{% endblock %}

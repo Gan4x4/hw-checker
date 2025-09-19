@@ -1,0 +1,17 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<div id="content-main">
+    <h1>Import quiz from JSON</h1>
+    <form method="post" enctype="multipart/form-data" novalidate>
+        {% csrf_token %}
+        <fieldset class="module aligned">
+            {{ form.as_p }}
+        </fieldset>
+        <div class="submit-row">
+            <input type="submit" value="Import">
+            <a class="button cancel-link" href="{% url 'admin:quiz_quizlink_changelist' %}">Cancel</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

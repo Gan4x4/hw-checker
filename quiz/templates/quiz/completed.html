@@ -1,0 +1,109 @@
+{% extends "quiz/base.html" %}
+
+{% block title %}Quiz completed{% endblock %}
+
+{% block extra_css %}
+<style>
+    main.container {
+        width: min(1400px, 96vw);
+        padding: 40px 48px;
+    }
+
+    @media (max-width: 960px) {
+        main.container {
+            padding: 24px;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>All questions answered</h1>
+<p>Thanks! Your responses were recorded successfully.</p>
+{% if quiz.title %}
+<p class="muted">Quiz reference: {{ quiz.title }}</p>
+{% endif %}
+<p class="muted">You can close this tab.</p>
+
+{% if rows %}
+<section class="results" style="margin-top:32px;">
+    <div class="results-summary" style="margin-bottom:20px; padding:16px; background:#f1f5f9; border:1px solid #cbd5e1; border-radius:8px;">
+        <h2 style="margin:0 0 8px; font-size:20px; color:#0f172a;">Your score</h2>
+        <p style="margin:0; color:#334155;">
+            {{ score.correct }} / {{ score.total }} correct
+            {% if score.percent is not None %}
+                ({{ score.percent|floatformat:0 }}%)
+            {% endif %}
+            • {{ score.attempted }} answered
+        </p>
+    </div>
+
+    <div class="results-table-wrapper" style="overflow-x:auto;">
+        <table style="width:100%; border-collapse:collapse; color:#1f2933; min-width:960px;">
+            <thead>
+                <tr style="background:#e2e8f0;">
+                    <th style="text-align:left; padding:10px 12px;">#</th>
+                    <th style="text-align:left; padding:10px 12px;">Question</th>
+                    <th style="text-align:left; padding:10px 12px;">Answers</th>
+                    <th style="text-align:left; padding:10px 12px;">Correct</th>
+                    <th style="text-align:left; padding:10px 12px;">Weight</th>
+                    <th style="text-align:left; padding:10px 12px;">Status</th>
+                    <th style="text-align:left; padding:10px 12px;">Time (s)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                <tr style="border-bottom:1px solid #e2e8f0; {% if row.status == 'correct' %}background:#f0fdf4;{% elif row.status == 'incorrect' %}background:#fef2f2;{% endif %}">
+                    <td style="padding:12px; vertical-align:top;">{{ row.order }}</td>
+                    <td style="padding:12px; vertical-align:top;">
+                        <div style="font-weight:600; color:#0f172a;">{{ row.question.question|linebreaksbr }}</div>
+                        {% if row.question.code_snippet %}
+                        <pre style="margin-top:8px; padding:12px; background:#111827; color:#f9fafb; border-radius:8px; overflow:auto;">{{ row.question.code_snippet }}</pre>
+                        {% endif %}
+                        {% if row.question.source %}
+                            <div style="margin-top:6px; font-size:12px; color:#475569;">Source: {{ row.question.source }}</div>
+                        {% endif %}
+                    </td>
+                    <td style="padding:12px; vertical-align:top;">
+                        {% if row.answers %}
+                            <ul style="margin:0; padding-left:18px;">
+                                {% for answer in row.answers %}
+                                <li style="margin-bottom:4px;">
+                                    {% if row.selected_answer == answer %}
+                                        <strong>{{ answer }}</strong>
+                                    {% else %}
+                                        {{ answer }}
+                                    {% endif %}
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        {% else %}
+                            <span style="color:#64748b;">No answers available</span>
+                        {% endif %}
+                    </td>
+                    <td style="padding:12px; vertical-align:top; color:#0f172a;">{{ row.correct_answer }}</td>
+                    <td style="padding:12px; vertical-align:top; color:#0f172a;">{{ row.weight|floatformat:2 }}</td>
+                    <td style="padding:12px; vertical-align:top;">
+                        {% if row.status == 'correct' %}
+                            <span style="color:#047857; font-weight:700;">Correct</span>
+                        {% elif row.status == 'incorrect' %}
+                            <span style="color:#b91c1c; font-weight:700;">Incorrect</span>
+                        {% else %}
+                            <span style="color:#64748b;">Not answered</span>
+                        {% endif %}
+                    </td>
+                    <td style="padding:12px; vertical-align:top;">
+                        {% if row.time_spent %}
+                            {{ row.time_spent|floatformat:0 }}
+                        {% else %}
+                            —
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endif %}
+{% endblock %}
