@@ -3,7 +3,7 @@ from threading import local
 
 from django.contrib import admin, messages
 from django.db.models import Count, Q
-from django.http import HttpResponseBadRequest
+from django.http import HttpResponseBadRequest, HttpResponseRedirect
 from django.middleware.csrf import get_token
 from django.shortcuts import redirect
 from django.template.response import TemplateResponse
@@ -13,10 +13,10 @@ from django.utils.translation import gettext_lazy as _
 
 from django.db.models import Prefetch
 
-from .forms import QuizImportForm
+from .forms import QuizImportForm, StudentImportForm
 from .management.commands.import_questions import QuizImportError, import_quiz_from_json
 from .models import Attempt, Question, QuizLink, QuizQuestion, Student
-from .utils import sync_students_from_csv
+from .utils import import_students_from_content, sync_students_from_csv
 
 
 _thread_locals = local()
@@ -38,6 +38,7 @@ class StudentAdmin(admin.ModelAdmin):
         "student_actions",
     )
     search_fields = ("name", "email")
+    change_list_template = "admin/quiz/student/change_list.html"
 
     def get_queryset(self, request):
         quizzes_prefetch = Prefetch(
@@ -102,6 +103,38 @@ class StudentAdmin(admin.ModelAdmin):
             ),
         ]
         return custom_urls + urls
+
+    def changelist_view(self, request, extra_context=None):
+        form = StudentImportForm(request.POST or None, request.FILES or None)
+
+        if request.method == "POST" and form.is_valid():
+            upload = form.cleaned_data["csv_file"]
+            try:
+                content = upload.read().decode("utf-8-sig")
+            except UnicodeDecodeError:
+                form.add_error("csv_file", _("File must be valid UTF-8 encoded CSV."))
+            else:
+                try:
+                    created = import_students_from_content(content)
+                except Exception as exc:  # pragma: no cover - handled via admin feedback
+                    form.add_error("csv_file", str(exc))
+                else:
+                    if created:
+                        messages.success(
+                            request,
+                            _("Imported or updated %(count)d student(s).")
+                            % {"count": created},
+                        )
+                    else:
+                        messages.info(
+                            request,
+                            _("No new students were imported or updated."),
+                        )
+                    return HttpResponseRedirect(request.path)
+
+        extra_context = extra_context or {}
+        extra_context["import_form"] = form
+        return super().changelist_view(request, extra_context=extra_context)
 
     def quizzes_view(self, request, student_id):
         student = self.get_object(request, student_id)

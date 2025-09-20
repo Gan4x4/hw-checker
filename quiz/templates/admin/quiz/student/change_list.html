@@ -1,0 +1,14 @@
+{% extends "admin/change_list.html" %}
+{% load i18n %}
+
+{% block content %}
+    <div class="module" id="student-import-module">
+        <h2>{% trans "Import students" %}</h2>
+        <form method="post" enctype="multipart/form-data" novalidate>
+            {% csrf_token %}
+            {{ import_form.as_p }}
+            <button type="submit" class="button default">{% trans "Import" %}</button>
+        </form>
+    </div>
+    {{ block.super }}
+{% endblock %}

@@ -21,3 +21,10 @@ class QuizImportForm(forms.Form):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["student"].queryset = Student.objects.all().order_by("name")
+
+
+class StudentImportForm(forms.Form):
+    csv_file = forms.FileField(
+        label="Students CSV file",
+        help_text="Upload a UTF-8 encoded CSV with columns: name, email, course, group.",
+    )
