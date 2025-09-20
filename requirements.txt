@@ -1,2 +1,6 @@
-Django==5.2.6
+Django==4.1,<4.2
 Pillow==11.3.0
+PyMySQL>=1.1,<1.2
+gunicorn
+dj-database-url>=2.0  # keep if you're using it already
+
