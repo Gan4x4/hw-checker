@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 from datetime import datetime
 from pathlib import Path
 from typing import List
@@ -104,10 +105,13 @@ class QuizSessionView(View):
         request.session["last_image_path"] = image_path
 
         remaining_seconds = max(0, int(self.timeout_seconds - elapsed_seconds))
+        answers = list(enumerate(question.answers))
+        random.shuffle(answers)
+
         context = {
             "quiz": quiz,
             "question": question,
-            "answers": list(enumerate(question.answers)),
+            "answers": answers,
             "image_url": image_url,
             "image_path": image_path,
             "question_number": answered_count + 1,

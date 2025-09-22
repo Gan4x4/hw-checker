@@ -808,37 +808,64 @@ class TestAdmin(admin.ModelAdmin):
 
             return response
 
-        if request.method == "POST" and request.POST.get("_start_test"):
-            if not obj:
-                self.message_user(
-                    request,
-                    _("Test not found."),
-                    level=messages.ERROR,
-                )
-                return redirect("admin:quiz_test_changelist")
-            try:
-                obj.start()
-            except ValidationError as exc:
-                self.message_user(request, str(exc), level=messages.ERROR)
-            else:
-                self.message_user(
-                    request,
-                    _("Test '%(title)s' started.")
-                    % {"title": obj.title or obj.pk},
-                    level=messages.SUCCESS,
-                )
-            return redirect("admin:quiz_test_change", obj.pk)
+        if request.method == "POST":
+            if request.POST.get("_reset_test"):
+                if not obj:
+                    self.message_user(
+                        request,
+                        _("Test not found."),
+                        level=messages.ERROR,
+                    )
+                    return redirect("admin:quiz_test_changelist")
+                total_attempts = obj.reset()
+                if total_attempts:
+                    self.message_user(
+                        request,
+                        _("Test reset. %(count)d attempt(s) cleared.")
+                        % {"count": total_attempts},
+                        level=messages.SUCCESS,
+                    )
+                else:
+                    self.message_user(
+                        request,
+                        _("Test reset."),
+                        level=messages.INFO,
+                    )
+                return redirect("admin:quiz_test_change", obj.pk)
+
+            if request.POST.get("_start_test"):
+                if not obj:
+                    self.message_user(
+                        request,
+                        _("Test not found."),
+                        level=messages.ERROR,
+                    )
+                    return redirect("admin:quiz_test_changelist")
+                try:
+                    obj.start()
+                except ValidationError as exc:
+                    self.message_user(request, str(exc), level=messages.ERROR)
+                else:
+                    self.message_user(
+                        request,
+                        _("Test '%(title)s' started.")
+                        % {"title": obj.title or obj.pk},
+                        level=messages.SUCCESS,
+                    )
+                return redirect("admin:quiz_test_change", obj.pk)
 
         extra_context = extra_context or {}
         if obj:
             obj.refresh_state()
             has_quizzes = obj.quizzes.exists()
+            can_reset = obj.can_reset()
             extra_context.update(
                 {
                     "can_start": obj.can_start() and has_quizzes,
                     "is_active": obj.state == TestState.ACTIVE,
                     "remaining_seconds": obj.remaining_seconds(),
                     "has_quizzes": has_quizzes,
+                    "can_reset": can_reset,
                 }
             )
 

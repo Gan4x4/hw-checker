@@ -326,6 +326,34 @@ class Test(models.Model):
         remaining = int((self.finished_at - timezone.now()).total_seconds())
         return max(0, remaining)
 
+    def can_reset(self) -> bool:
+        if not self.quizzes.exists():
+            return False
+        if self.state == TestState.DRAFT:
+            return False
+        if self.state == TestState.ACTIVE:
+            return True
+        if self.state == TestState.FINISHED:
+            return True
+        return False
+
+    def reset(self) -> int:
+        """Return the test to draft and reset all related quizzes.
+
+        Returns the number of attempts cleared across quizzes.
+        """
+
+        total_attempts = 0
+        for quiz in self.quizzes.all():
+            total_attempts += quiz.reset()
+
+        self.state = TestState.DRAFT
+        self.started_at = None
+        self.finished_at = None
+        self.save(update_fields=["state", "started_at", "finished_at"])
+
+        return total_attempts
+
 
 class QuizQuestion(models.Model):
     quiz = models.ForeignKey(QuizLink, related_name="quiz_questions", on_delete=models.CASCADE)

@@ -295,6 +295,34 @@ class TestAdminStartTests(TestCase):
         self.test.refresh_from_db()
         self.assertEqual(self.test.state, TestState.ACTIVE)
 
+    def test_reset_button_returns_test_to_draft_and_clears_quizzes(self):
+        self.test.start()
+        quiz_question = self.quiz.quiz_questions.first()
+        Attempt.objects.create(
+            quiz=self.quiz,
+            question=quiz_question.question,
+            selected_answer_index=1,
+        )
+        self.quiz.completed_at = timezone.now()
+        self.quiz.save(update_fields=["completed_at"])
+
+        url = f"/admin/quiz/test/{self.test.pk}/change/"
+        request = self.factory.post(url, data={"_reset_test": "1"})
+        request.user = self.superuser
+        request.session = self.client.session
+        setattr(request, "_messages", FallbackStorage(request))
+
+        response = self.admin.changeform_view(request, str(self.test.pk))
+
+        self.assertEqual(response.status_code, 302)
+        self.test.refresh_from_db()
+        self.assertEqual(self.test.state, TestState.DRAFT)
+        self.assertIsNone(self.test.started_at)
+        self.assertIsNone(self.test.finished_at)
+        self.quiz.refresh_from_db()
+        self.assertIsNone(self.quiz.completed_at)
+        self.assertFalse(self.quiz.attempts.exists())
+
     def test_export_links_returns_csv(self):
         url = f"/admin/quiz/test/{self.test.pk}/change/"
         request = self.factory.post(url, data={"_export_links": "1"})
