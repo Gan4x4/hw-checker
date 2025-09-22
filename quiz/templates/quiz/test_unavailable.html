@@ -1,0 +1,32 @@
+{% extends "quiz/base.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Test unavailable" %}{% endblock %}
+
+{% block content %}
+    <h1>{% trans "Test unavailable" %}</h1>
+    {% if test %}
+        <p>
+            {% blocktrans with name=test.title|default:test.pk %}
+                The test "{{ name }}" is not accessible right now.
+            {% endblocktrans %}
+        </p>
+        {% if is_pending %}
+            <p>{% trans "The test has not started yet. Please wait for your instructor to begin the session." %}</p>
+            {% if duration_minutes %}
+                <p>{% blocktrans %}Once started, you will have {{ duration_minutes }} minute(s) to complete the quiz.{% endblocktrans %}</p>
+            {% endif %}
+        {% elif is_finished %}
+            <p>{% trans "The test window has closed. Contact your instructor if you believe this is a mistake." %}</p>
+            {% if finished_at %}
+                <p class="muted">
+                    {% blocktrans with finished=finished_at %}The test ended at {{ finished }}.{% endblocktrans %}
+                </p>
+            {% endif %}
+        {% else %}
+            <p>{% trans "This test is currently unavailable." %}</p>
+        {% endif %}
+    {% else %}
+        <p>{% trans "This quiz is not currently available." %}</p>
+    {% endif %}
+{% endblock %}

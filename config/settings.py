@@ -126,6 +126,13 @@ STATIC_ROOT = BASE_DIR / "static"
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
+# Quiz configuration
+raw_quiz_max_questions = os.environ.get("QUIZ_MAX_QUESTIONS", "7")
+try:
+    QUIZ_MAX_QUESTIONS = int(raw_quiz_max_questions)
+except (TypeError, ValueError):
+    QUIZ_MAX_QUESTIONS = 7
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 

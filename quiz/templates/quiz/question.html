@@ -17,10 +17,14 @@
         overflow: hidden;
         margin-bottom: 24px;
         background: #f9fafc;
+        display: flex;
+        justify-content: flex-start;
+        align-items: flex-start;
     }
     .question-image img {
         display: block;
-        width: 100%;
+        width: auto;
+        max-width: 100%;
         height: auto;
     }
     .answers {
@@ -56,7 +60,6 @@
     <input type="hidden" name="question_id" value="{{ question.id }}">
     <input type="hidden" name="image_path" value="{{ image_path }}">
     <input type="hidden" name="selected_answer" id="selected-answer">
-    <input type="hidden" name="time_spent" id="time-spent">
     <div class="answers">
         {% for idx, answer in answers %}
         <button type="button" class="answer" data-index="{{ idx }}">{{ answer }}</button>
@@ -69,17 +72,24 @@
 {% block extra_js %}
 <script>
 (() => {
-    const timeout = {{ timeout_seconds }};
+    const timeoutSeconds = {{ timeout_seconds }};
+    const initialRemaining = {{ remaining_seconds }};
     const countdownEl = document.getElementById('countdown');
     const form = document.getElementById('answer-form');
     const selectedInput = document.getElementById('selected-answer');
-    const timeSpentInput = document.getElementById('time-spent');
-    const startTime = Date.now();
+
+    const parsedStart = Date.parse('{{ question_started_at|escapejs }}');
+    const parsedServerNow = Date.parse('{{ server_now|escapejs }}');
+    const fallbackRemaining = Number.isFinite(initialRemaining) ? initialRemaining : timeoutSeconds;
+    let startTimestampMs = Date.now() - Math.max(0, timeoutSeconds - fallbackRemaining) * 1000;
+
+    if (!Number.isNaN(parsedStart) && !Number.isNaN(parsedServerNow)) {
+        const clockOffsetMs = Date.now() - parsedServerNow;
+        startTimestampMs = parsedStart + clockOffsetMs;
+    }
 
     function submitForm() {
         if (!form.dataset.submitted) {
-            const elapsedSeconds = Math.round((Date.now() - startTime) / 1000);
-            timeSpentInput.value = elapsedSeconds;
             form.dataset.submitted = 'true';
             form.submit();
         }
@@ -92,22 +102,28 @@
         });
     });
 
-    let remaining = timeout;
-    countdownEl.textContent = remaining;
-    const intervalId = setInterval(() => {
-        remaining -= 1;
-        countdownEl.textContent = Math.max(remaining, 0);
+    function updateCountdown() {
+        const elapsedSeconds = Math.floor((Date.now() - startTimestampMs) / 1000);
+        const remaining = Math.max(timeoutSeconds - elapsedSeconds, 0);
+        countdownEl.textContent = remaining;
         if (remaining <= 0) {
-            clearInterval(intervalId);
             selectedInput.value = '';
             submitForm();
+            return true;
         }
-    }, 1000);
+        return false;
+    }
+
+    updateCountdown();
+    const intervalId = setInterval(() => {
+        const finished = updateCountdown();
+        if (finished || form.dataset.submitted) {
+            clearInterval(intervalId);
+        }
+    }, 250);
 
     form.addEventListener('submit', () => {
         if (!form.dataset.submitted) {
-            const elapsedSeconds = Math.round((Date.now() - startTime) / 1000);
-            timeSpentInput.value = elapsedSeconds;
             form.dataset.submitted = 'true';
         }
     });

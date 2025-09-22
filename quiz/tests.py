@@ -1,19 +1,20 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.admin.sites import AdminSite
 from django.contrib.auth import get_user_model
 from django.contrib.messages.storage.fallback import FallbackStorage
-from django.test import RequestFactory, TestCase
+from django.test import RequestFactory, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from .admin import QuizLinkAdmin, StudentAdmin
+from .admin import QuizLinkAdmin, StudentAdmin, TestAdmin
 from .management.commands.import_questions import import_quiz_from_json
-from .models import Attempt, Question, QuizLink, QuizQuestion, Student
-from .views import QuizSessionView
+from .models import Attempt, Question, QuizLink, QuizQuestion, Student, Test, TestState
+from .views import QuizQuestionFeedbackView, QuizSessionView
 
 
 class QuizImportTests(TestCase):
@@ -106,6 +107,9 @@ class QuizSessionResultsTests(TestCase):
         self.assertEqual(row["answers"], ["False", "True"])
         self.assertEqual(row["time_spent"], 8.2)
         self.assertEqual(row["weight"], 2.5)
+        self.assertIn("quiz_question_id", row)
+        self.assertFalse(row["has_feedback"])
+        self.assertEqual(row["feedback_comment"], "")
         self.assertEqual(score["correct"], 1)
         self.assertEqual(score["total"], 1)
         self.assertEqual(score["attempted"], 1)
@@ -134,6 +138,182 @@ class QuizSessionResultsTests(TestCase):
         self.assertEqual(score["correct"], 0)
         self.assertEqual(score["total"], 1)
 
+    def test_build_results_skips_disabled_questions(self):
+        disabled_question = Question.objects.create(
+            question="Skip me",
+            answers=["No", "Yes"],
+            correct_answer_index=1,
+        )
+        QuizQuestion.objects.create(
+            quiz=self.quiz,
+            question=disabled_question,
+            order=2,
+            is_disabled=True,
+        )
+        Attempt.objects.create(
+            quiz=self.quiz,
+            question=disabled_question,
+            selected_answer_index=1,
+        )
+
+        rows, score = QuizSessionView._build_results(self.quiz)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["question"], self.question)
+        self.assertEqual(score["total"], 1)
+        self.assertEqual(score["attempted"], 0)
+
+    def test_submit_feedback_saves_comment_and_surfaces_in_results(self):
+        Attempt.objects.create(
+            quiz=self.quiz,
+            question=self.question,
+            selected_answer_index=1,
+        )
+        self.quiz.mark_completed()
+        quiz_question = self.quiz.quiz_questions.first()
+
+        url = reverse("quiz:feedback", args=[self.quiz.token, quiz_question.pk])
+        response = self.client.post(url, {"comment": "Please clarify"}, follow=True)
+
+        self.assertEqual(response.status_code, 200)
+        quiz_question.refresh_from_db()
+        self.assertFalse(quiz_question.is_disabled)
+        self.assertEqual(quiz_question.disabled_comment, "Please clarify")
+
+        rows = response.context["rows"]
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertTrue(row["has_feedback"])
+        self.assertEqual(row["feedback_comment"], "Please clarify")
+        self.assertEqual(response.context["feedback_question_id"], str(quiz_question.pk))
+
+    def test_submit_feedback_ajax_returns_payload(self):
+        Attempt.objects.create(
+            quiz=self.quiz,
+            question=self.question,
+            selected_answer_index=1,
+        )
+        self.quiz.mark_completed()
+        quiz_question = self.quiz.quiz_questions.first()
+
+        long_comment = "A" * (QuizQuestionFeedbackView.max_comment_length + 10)
+        url = reverse("quiz:feedback", args=[self.quiz.token, quiz_question.pk])
+        response = self.client.post(
+            url,
+            {"comment": long_comment},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["has_feedback"])
+        self.assertEqual(payload["quiz_question_id"], quiz_question.pk)
+        self.assertEqual(len(payload["comment"]), QuizQuestionFeedbackView.max_comment_length)
+        self.assertTrue(payload["was_trimmed"])
+
+
+class TestAccessControlTests(TestCase):
+    def setUp(self):
+        self.question = Question.objects.create(
+            question="Gatekeeper",
+            answers=["No", "Yes"],
+            correct_answer_index=1,
+        )
+        self.quiz = QuizLink.objects.create(title="Restricted quiz")
+        QuizQuestion.objects.create(quiz=self.quiz, question=self.question, order=1)
+        self.test = Test.objects.create(title="Midterm", duration=timedelta(minutes=5))
+        self.quiz.test = self.test
+        self.quiz.save(update_fields=["test"])
+
+    def test_quiz_unavailable_before_test_starts(self):
+        response = self.client.get(reverse("quiz:session", args=[self.quiz.token]))
+
+        self.assertEqual(response.status_code, 403)
+        self.assertTemplateUsed(response, "quiz/test_unavailable.html")
+        self.assertTrue(response.context["is_pending"])
+        self.assertFalse(response.context["is_finished"])
+
+    def test_quiz_available_during_active_test(self):
+        self.test.start()
+
+        response = self.client.get(reverse("quiz:session", args=[self.quiz.token]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "quiz/welcome.html")
+
+    def test_quiz_unavailable_after_test_finishes(self):
+        self.test.start()
+        self.test.started_at = timezone.now() - timedelta(minutes=10)
+        self.test.finished_at = timezone.now() - timedelta(minutes=5)
+        self.test.state = TestState.ACTIVE
+        self.test.save(update_fields=["started_at", "finished_at", "state"])
+
+        response = self.client.get(reverse("quiz:session", args=[self.quiz.token]))
+
+        self.assertEqual(response.status_code, 403)
+        self.assertTemplateUsed(response, "quiz/test_unavailable.html")
+        self.assertTrue(response.context["is_finished"])
+
+
+class TestAdminStartTests(TestCase):
+    def setUp(self):
+        self.admin_site = AdminSite()
+        self.admin = TestAdmin(Test, self.admin_site)
+        self.factory = RequestFactory()
+        User = get_user_model()
+        self.superuser = User.objects.create_superuser(
+            username="admin",
+            email="admin@example.com",
+            password="password123",
+        )
+        self.question = Question.objects.create(
+            question="Access",
+            answers=["No", "Yes"],
+            correct_answer_index=1,
+        )
+        self.quiz = QuizLink.objects.create(title="Locked quiz")
+        QuizQuestion.objects.create(quiz=self.quiz, question=self.question, order=1)
+        self.test = Test.objects.create(title="Exam", duration=timedelta(minutes=5))
+        self.student = Student.objects.create(
+            name="Alice Example",
+            email="alice@example.com",
+        )
+        self.quiz.test = self.test
+        self.quiz.student = self.student
+        self.quiz.save(update_fields=["test", "student"])
+
+    def test_start_button_activates_test(self):
+        url = f"/admin/quiz/test/{self.test.pk}/change/"
+        request = self.factory.post(url, data={"_start_test": "1"})
+        request.user = self.superuser
+        request.session = self.client.session
+        setattr(request, "_messages", FallbackStorage(request))
+
+        response = self.admin.changeform_view(request, str(self.test.pk))
+
+        self.assertEqual(response.status_code, 302)
+        self.test.refresh_from_db()
+        self.assertEqual(self.test.state, TestState.ACTIVE)
+
+    def test_export_links_returns_csv(self):
+        url = f"/admin/quiz/test/{self.test.pk}/change/"
+        request = self.factory.post(url, data={"_export_links": "1"})
+        request.user = self.superuser
+        request.session = self.client.session
+        setattr(request, "_messages", FallbackStorage(request))
+
+        response = self.admin.changeform_view(request, str(self.test.pk))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "text/csv")
+        self.assertIn("links.csv", response["Content-Disposition"])
+        content = response.content.decode("utf-8")
+        header = content.splitlines()[0]
+        self.assertEqual(header, "name,email,quiz_url")
+        self.assertIn(self.student.name, content)
+        self.assertIn(self.student.email, content)
+        expected_url = f"http://testserver{reverse('quiz:session', kwargs={'token': self.quiz.token})}"
+        self.assertIn(expected_url, content)
 
 class QuizLinkResetTests(TestCase):
     def setUp(self):
@@ -253,6 +433,54 @@ class QuizLinkAdminActionsTests(TestCase):
         annotated_quiz = self.admin.get_queryset(request).get(pk=self.quiz.pk)
         self.assertEqual(self.admin.score_display(annotated_quiz), "1/2 (50%)")
 
+    def test_score_display_ignores_disabled_questions(self):
+        question_two = Question.objects.create(
+            question="Second?",
+            answers=["No", "Yes"],
+            correct_answer_index=1,
+        )
+        quiz_question_two = QuizQuestion.objects.create(
+            quiz=self.quiz,
+            question=question_two,
+            order=2,
+            is_disabled=True,
+        )
+
+        Attempt.objects.create(
+            quiz=self.quiz,
+            question=self.quiz.quiz_questions.first().question,
+            selected_answer_index=1,
+        )
+        Attempt.objects.create(
+            quiz=self.quiz,
+            question=quiz_question_two.question,
+            selected_answer_index=1,
+        )
+
+        request = self.factory.get("/admin/quiz/quizlink/")
+        request.user = self.superuser
+        annotated_quiz = self.admin.get_queryset(request).get(pk=self.quiz.pk)
+        self.assertEqual(self.admin.score_display(annotated_quiz), "1/1 (100%)")
+
+    def test_unhidden_question_count_uses_annotation(self):
+        question_two = Question.objects.create(
+            question="Second?",
+            answers=["No", "Yes"],
+            correct_answer_index=0,
+        )
+        QuizQuestion.objects.create(
+            quiz=self.quiz,
+            question=question_two,
+            order=2,
+            is_disabled=True,
+        )
+
+        request = self.factory.get("/admin/quiz/quizlink/")
+        request.user = self.superuser
+        annotated_quiz = self.admin.get_queryset(request).get(pk=self.quiz.pk)
+
+        self.assertEqual(self.admin.unhidden_question_count(annotated_quiz), 1)
+
     def test_results_view_includes_attempt_details(self):
         question = self.quiz.quiz_questions.first().question
         Attempt.objects.create(
@@ -277,6 +505,149 @@ class QuizLinkAdminActionsTests(TestCase):
         score = response.context_data["score"]
         self.assertEqual(score["correct"], 1)
         self.assertEqual(score["total"], 1)
+
+    def test_results_view_counts_flagged_feedback(self):
+        quiz_question = self.quiz.quiz_questions.first()
+        quiz_question.disabled_comment = "Confusing wording"
+        quiz_question.save(update_fields=["disabled_comment"])
+
+        request = self.factory.get(f"/admin/quiz/quizlink/{self.quiz.pk}/results/")
+        request.user = self.superuser
+        response = self.admin.results_view(request, self.quiz.pk)
+
+        self.assertEqual(response.status_code, 200)
+        response.render()
+        self.assertEqual(response.context_data["feedback_count"], 1)
+        rows = response.context_data["rows"]
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertTrue(row["has_feedback"])
+        self.assertEqual(row["disabled_comment"], "Confusing wording")
+
+    def test_download_hidden_questions_action_returns_file(self):
+        quiz_question = self.quiz.quiz_questions.first()
+        quiz_question.is_disabled = True
+        quiz_question.disabled_comment = "Broken"
+        quiz_question.save(update_fields=["is_disabled", "disabled_comment"])
+
+        request = self.factory.post("/admin/quiz/quizlink/")
+        request.user = self.superuser
+
+        queryset = QuizLink.objects.filter(pk=self.quiz.pk)
+        response = self.admin.download_hidden_questions_action(request, queryset)
+
+        self.assertIsNotNone(response)
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.content.decode("utf-8"))
+        self.assertIsInstance(payload, list)
+        self.assertEqual(len(payload), 1)
+        self.assertEqual(payload[0]["questions"][0]["disabled_comment"], "Broken")
+
+    def test_download_hidden_questions_action_shows_message_when_empty(self):
+        request = self.factory.post("/admin/quiz/quizlink/")
+        request.user = self.superuser
+        request.session = self.client.session
+        setattr(request, "_messages", FallbackStorage(request))
+
+        queryset = QuizLink.objects.filter(pk=self.quiz.pk)
+        response = self.admin.download_hidden_questions_action(request, queryset)
+
+        self.assertIsNone(response)
+
+    def test_export_hidden_questions_downloads_payload(self):
+        quiz_question = self.quiz.quiz_questions.first()
+        quiz_question.is_disabled = True
+        quiz_question.disabled_comment = "Needs review"
+        quiz_question.save(update_fields=["is_disabled", "disabled_comment"])
+
+        request = self.factory.get(f"/admin/quiz/quizlink/{self.quiz.pk}/results/export-hidden/")
+        request.user = self.superuser
+        response = self.admin.export_hidden_questions_view(request, self.quiz.pk)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/json")
+        content = response.content.decode("utf-8")
+        payload = json.loads(content)
+        self.assertIn("questions", payload)
+        self.assertEqual(len(payload["questions"]), 1)
+        exported_question = payload["questions"][0]
+        self.assertEqual(exported_question["question"], quiz_question.question.question)
+        self.assertEqual(exported_question["disabled_comment"], "Needs review")
+
+    def test_export_hidden_questions_redirects_when_none(self):
+        request = self.factory.get(f"/admin/quiz/quizlink/{self.quiz.pk}/results/export-hidden/")
+        request.user = self.superuser
+        request.session = self.client.session
+        setattr(request, "_messages", FallbackStorage(request))
+
+        response = self.admin.export_hidden_questions_view(request, self.quiz.pk)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(f"/admin/quiz/quizlink/{self.quiz.pk}/results/", response.url)
+
+    def test_disable_and_enable_question_flow(self):
+        quiz_question = self.quiz.quiz_questions.first()
+
+        disable_request = self.factory.post("/disable/", data={"comment": "Buggy question"})
+        disable_request.user = self.superuser
+        disable_request.session = self.client.session
+        setattr(disable_request, "_messages", FallbackStorage(disable_request))
+
+        response = self.admin.disable_question_view(disable_request, self.quiz.pk, quiz_question.pk)
+        self.assertEqual(response.status_code, 302)
+        quiz_question.refresh_from_db()
+        self.assertTrue(quiz_question.is_disabled)
+        self.assertEqual(quiz_question.disabled_comment, "Buggy question")
+
+        enable_request = self.factory.post("/enable/")
+        enable_request.user = self.superuser
+        enable_request.session = self.client.session
+        setattr(enable_request, "_messages", FallbackStorage(enable_request))
+
+        response = self.admin.enable_question_view(enable_request, self.quiz.pk, quiz_question.pk)
+        self.assertEqual(response.status_code, 302)
+        quiz_question.refresh_from_db()
+        self.assertFalse(quiz_question.is_disabled)
+        self.assertEqual(quiz_question.disabled_comment, "")
+
+    def test_results_view_marks_disabled_questions(self):
+        quiz_question = self.quiz.quiz_questions.first()
+        quiz_question.is_disabled = True
+        quiz_question.disabled_comment = "Broken"
+        quiz_question.save(update_fields=["is_disabled", "disabled_comment"])
+
+        Attempt.objects.create(
+            quiz=self.quiz,
+            question=quiz_question.question,
+            selected_answer_index=1,
+        )
+
+        request = self.factory.get(f"/admin/quiz/quizlink/{self.quiz.pk}/results/")
+        request.user = self.superuser
+        response = self.admin.results_view(request, self.quiz.pk)
+        self.assertEqual(response.status_code, 200)
+        response.render()
+        rows = response.context_data["rows"]
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertTrue(row["is_disabled"])
+        self.assertEqual(row["disabled_comment"], "Broken")
+        score = response.context_data["score"]
+        self.assertEqual(score["total"], 0)
+        self.assertEqual(score["attempted"], 0)
+
+    def test_disable_question_requires_comment(self):
+        quiz_question = self.quiz.quiz_questions.first()
+        request = self.factory.post("/disable/", data={"comment": ""})
+        request.user = self.superuser
+        request.session = self.client.session
+        setattr(request, "_messages", FallbackStorage(request))
+
+        response = self.admin.disable_question_view(request, self.quiz.pk, quiz_question.pk)
+
+        self.assertEqual(response.status_code, 302)
+        quiz_question.refresh_from_db()
+        self.assertFalse(quiz_question.is_disabled)
 
 
 class StudentAdminTests(TestCase):
@@ -344,3 +715,37 @@ class StudentAdminTests(TestCase):
         self.assertEqual(response.status_code, 200)
         response.render()
         self.assertTrue(response.context_data["rows"])
+
+
+class QuizQuestionLimitTests(TestCase):
+    def setUp(self):
+        self.quiz = QuizLink.objects.create(title="Limited Quiz")
+        self.questions = []
+        for order in range(1, 4):
+            question = Question.objects.create(
+                question=f"Question {order}",
+                answers=["A", "B"],
+                correct_answer_index=0,
+            )
+            QuizQuestion.objects.create(quiz=self.quiz, question=question, order=order)
+            self.questions.append(question)
+
+    @override_settings(QUIZ_MAX_QUESTIONS=2)
+    def test_ordered_questions_respect_limit(self):
+        quiz_questions = list(self.quiz.ordered_quiz_questions())
+        self.assertEqual(len(quiz_questions), 2)
+        self.assertEqual([qq.order for qq in quiz_questions], [1, 2])
+        self.assertEqual(self.quiz.total_questions(), 2)
+
+    @override_settings(QUIZ_MAX_QUESTIONS=2)
+    def test_results_summary_respects_limit(self):
+        Attempt.objects.create(
+            quiz=self.quiz,
+            question=self.questions[0],
+            selected_answer_index=0,
+        )
+
+        rows, score = QuizSessionView._build_results(self.quiz)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(score["total"], 2)
+        self.assertEqual(score["attempted"], 1)

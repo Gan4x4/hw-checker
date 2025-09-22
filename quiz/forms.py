@@ -28,3 +28,18 @@ class StudentImportForm(forms.Form):
         label="Students CSV file",
         help_text="Upload a UTF-8 encoded CSV with columns: name, email, course, group.",
     )
+
+
+class TestCreationForm(forms.Form):
+    title = forms.CharField(
+        max_length=255,
+        required=False,
+        label="Title",
+        help_text="Optional name that will be shown in admin interfaces.",
+    )
+    duration_minutes = forms.IntegerField(
+        min_value=1,
+        initial=5,
+        label="Duration (minutes)",
+        help_text="How long the test remains active after starting.",
+    )

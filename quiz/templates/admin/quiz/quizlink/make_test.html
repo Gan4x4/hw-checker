@@ -1,0 +1,51 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block content %}
+<div id="content-main">
+    <h1>{% trans "Create test" %}</h1>
+    <form method="post">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="{{ action_name }}">
+        {% if select_across %}
+            <input type="hidden" name="select_across" value="{{ select_across }}">
+        {% endif %}
+        {% for selected in selected_ids %}
+            <input type="hidden" name="{{ action_checkbox_name }}" value="{{ selected }}">
+        {% endfor %}
+        <div class="module aligned">
+            {{ form.non_field_errors }}
+            {% for field in form %}
+                <div class="form-row">
+                    {{ field.errors }}
+                    <label for="{{ field.id_for_label }}">{{ field.label }}:</label>
+                    {{ field }}
+                    {% if field.help_text %}
+                        <p class="help">{{ field.help_text }}</p>
+                    {% endif %}
+                </div>
+            {% endfor %}
+        </div>
+        <fieldset class="module aligned">
+            <h2>{% trans "Selected quizzes" %}</h2>
+            <ul>
+                {% for quiz in quizzes %}
+                    <li>
+                        {{ quiz.title|default:quiz.token }}
+                        {% if quiz.student %}
+                            – {{ quiz.student.name }}
+                        {% endif %}
+                        {% if quiz.test %}
+                            <span class="quiet">({% trans "currently in test" %}: {{ quiz.test }})</span>
+                        {% endif %}
+                    </li>
+                {% endfor %}
+            </ul>
+        </fieldset>
+        <div class="submit-row">
+            <input type="submit" name="apply" value="{% trans "Create test" %}" class="button default">
+            <a href="{% url 'admin:quiz_quizlink_changelist' %}" class="button cancel-link">{% trans "Cancel" %}</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

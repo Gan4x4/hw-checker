@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import textwrap
 import uuid
+from datetime import timedelta
 from pathlib import Path
 from typing import List
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import DEFAULT_DB_ALIAS, models
+from django.utils import timezone
+from django.utils.translation import gettext_lazy as _
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -160,6 +163,13 @@ class QuizLink(models.Model):
     title = models.CharField(max_length=255, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
+    test = models.ForeignKey(
+        "quiz.Test",
+        null=True,
+        blank=True,
+        related_name="quizzes",
+        on_delete=models.SET_NULL,
+    )
     student = models.ForeignKey(
         Student,
         null=True,
@@ -176,15 +186,36 @@ class QuizLink(models.Model):
         return self.title or str(self.token)
 
     def ordered_quiz_questions(self) -> models.QuerySet["QuizQuestion"]:
-        return self.quiz_questions.select_related("question").order_by("order")
+        queryset = (
+            self.quiz_questions.select_related("question")
+            .filter(is_disabled=False)
+            .order_by("order")
+        )
+        limit = self._question_limit()
+        if limit is not None:
+            return queryset[:limit]
+        return queryset
 
     def total_questions(self) -> int:
-        return self.quiz_questions.count()
+        limit = self._question_limit()
+        queryset = self.quiz_questions.filter(is_disabled=False).order_by("order")
+        if limit is not None:
+            queryset = queryset[:limit]
+        return queryset.count()
+
+    @staticmethod
+    def _question_limit() -> int | None:
+        limit = getattr(settings, "QUIZ_MAX_QUESTIONS", None)
+        try:
+            limit_value = int(limit)
+        except (TypeError, ValueError):
+            return None
+        if limit_value <= 0:
+            return None
+        return limit_value
 
     def mark_completed(self) -> None:
         if self.completed_at is None:
-            from django.utils import timezone
-
             self.completed_at = timezone.now()
             self.save(update_fields=["completed_at"])
 
@@ -209,11 +240,99 @@ class QuizLink(models.Model):
 
         return deleted
 
+    def get_active_test(self) -> "Test | None":
+        """Return the associated test if it is currently active."""
+
+        test = self.test
+        if not test:
+            return None
+        test.refresh_state()
+        if test.state == TestState.ACTIVE:
+            return test
+        return None
+
+    def is_accessible(self) -> bool:
+        """Determine whether the quiz can be accessed right now."""
+
+        if not self.test:
+            return True
+        active_test = self.get_active_test()
+        return active_test is not None
+
+
+class TestState(models.TextChoices):
+    DRAFT = "draft", _("Draft")
+    ACTIVE = "active", _("Active")
+    FINISHED = "finished", _("Finished")
+
+
+class Test(models.Model):
+    title = models.CharField(max_length=255, blank=True)
+    duration = models.DurationField(help_text=_("Total time the test stays active."))
+    state = models.CharField(
+        max_length=20,
+        choices=TestState.choices,
+        default=TestState.DRAFT,
+    )
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:  # pragma: no cover - admin display helper
+        return self.title or f"Test {self.pk}"
+
+    def clean(self) -> None:
+        super().clean()
+        if self.duration and self.duration <= timedelta(0):
+            raise ValidationError("Duration must be positive.")
+
+    def refresh_state(self, *, commit: bool = True) -> str:
+        """Update the state based on current time and return it."""
+
+        if self.state == TestState.ACTIVE and self.finished_at:
+            if timezone.now() >= self.finished_at:
+                self.state = TestState.FINISHED
+                if commit:
+                    self.save(update_fields=["state"])
+        return self.state
+
+    def can_start(self) -> bool:
+        if self.state == TestState.DRAFT:
+            return True
+        if self.state == TestState.ACTIVE:
+            self.refresh_state()
+        return False
+
+    def start(self) -> None:
+        if not self.can_start():
+            raise ValidationError("Test cannot be started in its current state.")
+        if not self.duration or self.duration <= timedelta(0):
+            raise ValidationError("Test duration must be a positive value.")
+        if not self.quizzes.exists():
+            raise ValidationError("Cannot start a test without quizzes.")
+
+        now = timezone.now()
+        self.started_at = now
+        self.finished_at = now + self.duration
+        self.state = TestState.ACTIVE
+        self.save(update_fields=["started_at", "finished_at", "state"])
+
+    def remaining_seconds(self) -> int | None:
+        if self.state != TestState.ACTIVE or not self.finished_at:
+            return None
+        remaining = int((self.finished_at - timezone.now()).total_seconds())
+        return max(0, remaining)
+
 
 class QuizQuestion(models.Model):
     quiz = models.ForeignKey(QuizLink, related_name="quiz_questions", on_delete=models.CASCADE)
     question = models.ForeignKey(Question, on_delete=models.CASCADE)
     order = models.PositiveIntegerField()
+    is_disabled = models.BooleanField(default=False)
+    disabled_comment = models.TextField(blank=True)
 
     class Meta:
         ordering = ["order"]

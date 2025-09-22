@@ -1,0 +1,44 @@
+{% extends "admin/change_form.html" %}
+{% load i18n %}
+
+{% block submit_buttons_top %}
+    {% if has_quizzes %}
+        <button type="submit" name="_export_links" value="1" formnovalidate class="button">{% trans "Export quiz links" %}</button>
+    {% endif %}
+    {% if can_start %}
+        <button type="submit" name="_start_test" value="1" formnovalidate class="button default">{% trans "Start test" %}</button>
+    {% endif %}
+    {{ block.super }}
+{% endblock %}
+
+{% block submit_buttons_bottom %}
+    {% if has_quizzes %}
+        <button type="submit" name="_export_links" value="1" formnovalidate class="button">{% trans "Export quiz links" %}</button>
+    {% endif %}
+    {% if can_start %}
+        <button type="submit" name="_start_test" value="1" formnovalidate class="button default">{% trans "Start test" %}</button>
+    {% endif %}
+    {{ block.super }}
+{% endblock %}
+
+{% block after_field_sets %}
+    {{ block.super }}
+    {% if not has_quizzes %}
+        <div class="inline-group" style="margin-top: 1rem;">
+            <fieldset class="module">
+                <h2>{% trans "No quizzes assigned" %}</h2>
+                <p>{% trans "Add quizzes to this test from the Quiz list using the Make test action." %}</p>
+            </fieldset>
+        </div>
+    {% endif %}
+    {% if is_active %}
+        <div class="inline-group" style="margin-top: 1rem;">
+            <fieldset class="module">
+                <h2>{% trans "Active test" %}</h2>
+                <p>
+                    {% blocktrans %}This test is active. Remaining time: {{ remaining_seconds }} seconds.{% endblocktrans %}
+                </p>
+            </fieldset>
+        </div>
+    {% endif %}
+{% endblock %}

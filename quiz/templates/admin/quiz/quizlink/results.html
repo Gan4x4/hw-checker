@@ -11,8 +11,28 @@
             {% blocktrans with correct=score.correct total=score.total attempted=score.attempted percent=score.percent|floatformat:0 %}
                 {{ correct }} out of {{ total }} correct ({{ percent }}%) — {{ attempted }} answered
             {% endblocktrans %}
+            {% if disabled_count %}
+                <br>
+                {% blocktrans count disabled=disabled_count %}{{ disabled }} question hidden{% plural %}{{ disabled }} questions hidden{% endblocktrans %}
+            {% endif %}
+            {% if feedback_count %}
+                <br>
+                {% blocktrans count feedback=feedback_count %}{{ feedback }} question flagged by student{% plural %}{{ feedback }} questions flagged by students{% endblocktrans %}
+            {% endif %}
         {% else %}
-            {% trans "No questions configured for this quiz." %}
+            {% if disabled_count %}
+                {% blocktrans count disabled=disabled_count %}No active questions. {{ disabled }} question hidden.{% plural %}No active questions. {{ disabled }} questions hidden.{% endblocktrans %}
+                {% if feedback_count %}
+                    <br>
+                    {% blocktrans count feedback=feedback_count %}{{ feedback }} question flagged by student{% plural %}{{ feedback }} questions flagged by students{% endblocktrans %}
+                {% endif %}
+            {% else %}
+                {% if feedback_count %}
+                    {% blocktrans count feedback=feedback_count %}No active questions. {{ feedback }} question flagged by student.{% plural %}No active questions. {{ feedback }} questions flagged by students.{% endblocktrans %}
+                {% else %}
+                    {% trans "No questions configured for this quiz." %}
+                {% endif %}
+            {% endif %}
         {% endif %}
     </p>
 
@@ -25,12 +45,13 @@
                 <th style="text-align:left; padding:10px 12px; border-bottom:1px solid rgba(255,255,255,0.12);">{% trans "Correct" %}</th>
                 <th style="text-align:left; padding:10px 12px; border-bottom:1px solid rgba(255,255,255,0.12);">{% trans "Weight" %}</th>
                 <th style="text-align:left; padding:10px 12px; border-bottom:1px solid rgba(255,255,255,0.12);">{% trans "Status" %}</th>
+                <th style="text-align:left; padding:10px 12px; border-bottom:1px solid rgba(255,255,255,0.12); width:220px;">{% trans "Visibility" %}</th>
                 <th style="text-align:left; padding:10px 12px; border-bottom:1px solid rgba(255,255,255,0.12);">{% trans "Time (s)" %}</th>
             </tr>
         </thead>
         <tbody>
         {% for row in rows %}
-            <tr style="background:#ffffff;{% if row.status == 'correct' %} background:#e6f9ed;{% elif row.status == 'incorrect' %} background:#ffe8e8;{% endif %}">
+            <tr style="background:#ffffff;{% if row.is_disabled %} background:#f3f4f6;{% elif row.has_feedback %} background:#fff7ed;{% elif row.status == 'correct' %} background:#e6f9ed;{% elif row.status == 'incorrect' %} background:#ffe8e8;{% endif %}">
                 <td style="padding:12px; vertical-align:top; border-bottom:1px solid #f1f5f9; color:#0f172a;">{{ row.order }}</td>
                 <td style="padding:12px; vertical-align:top; border-bottom:1px solid #f1f5f9;">
                     <div style="font-weight:600; color:#0f172a;">{{ row.question.question|linebreaksbr }}</div>
@@ -66,12 +87,63 @@
                 </td>
                 <td style="padding:12px; vertical-align:top; border-bottom:1px solid #f1f5f9; color:#0f172a;">{{ row.weight|floatformat:2 }}</td>
                 <td style="padding:12px; vertical-align:top; border-bottom:1px solid #f1f5f9;">
-                    {% if row.status == 'correct' %}
+                    {% if row.is_disabled %}
+                        <span style="color:#475569; font-weight:700;">{% trans "Disabled" %}</span>
+                    {% elif row.status == 'correct' %}
                         <span style="color:#047857; font-weight:700;">{% trans "Correct" %}</span>
                     {% elif row.status == 'incorrect' %}
                         <span style="color:#b91c1c; font-weight:700;">{% trans "Incorrect" %}</span>
                     {% else %}
                         <span style="color:#64748b;">{% trans "Pending" %}</span>
+                    {% endif %}
+                </td>
+                <td style="padding:12px; vertical-align:top; border-bottom:1px solid #f1f5f9; min-width:240px; max-width:340px;">
+                    {% if row.is_disabled %}
+                        <span style="color:#b91c1c; font-weight:600;">{% trans "Hidden" %}</span>
+                        {% if row.disabled_comment %}
+                            <div style="margin-top:6px; font-size:12px; color:#475569; white-space:pre-wrap;">{{ row.disabled_comment|linebreaksbr }}</div>
+                        {% endif %}
+                        <div style="margin-top:8px; display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                            <button
+                                type="button"
+                                class="button edit-comment-button"
+                                data-action="{% url 'admin:quiz_quizlink_disable_question' quiz.pk row.quiz_question_id %}"
+                                data-question="{% filter force_escape %}{{ row.order }}. {{ row.question.question|striptags|truncatechars:120 }}{% endfilter %}"
+                                data-comment="{{ row.disabled_comment|default_if_none:''|escape }}"
+                                data-submit-label="{% trans "Save" %}"
+                            >{% trans "edit " %}</button>
+                            <form method="post" action="{% url 'admin:quiz_quizlink_enable_question' quiz.pk row.quiz_question_id %}" style="display:inline-block;">
+                                {% csrf_token %}
+                                <button type="submit" class="button">{% trans "Enable" %}</button>
+                            </form>
+                        </div>
+                    {% elif row.has_feedback %}
+                        <span style="color:#c2410c; font-weight:600;">{% trans "Flagged by student" %}</span>
+                        <div style="margin-top:6px; font-size:12px; color:#92400e; white-space:pre-wrap; background:#fff7ed; border:1px solid #fb923c; border-radius:6px; padding:10px;">{{ row.disabled_comment|linebreaksbr }}</div>
+                        <div style="margin-top:8px; display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                            <form method="post" action="{% url 'admin:quiz_quizlink_enable_question' quiz.pk row.quiz_question_id %}" style="display:inline-block;">
+                                {% csrf_token %}
+                                <button type="submit" class="button">{% trans "Clear feedback" %}</button>
+                            </form>
+                            <button
+                                type="button"
+                                class="button disable-question-button"
+                                data-action="{% url 'admin:quiz_quizlink_disable_question' quiz.pk row.quiz_question_id %}"
+                                data-question="{% filter force_escape %}{{ row.order }}. {{ row.question.question|striptags|truncatechars:120 }}{% endfilter %}"
+                                data-comment="{{ row.disabled_comment|default_if_none:''|escape }}"
+                                data-submit-label="{% trans "Disable" %}"
+                            >{% trans "Disable" %}</button>
+                        </div>
+                    {% else %}
+                        <span style="color:#047857; font-weight:600;">{% trans "Visible" %}</span>
+                        <div style="margin-top:8px;">
+                            <button
+                                type="button"
+                                class="button disable-question-button"
+                                data-action="{% url 'admin:quiz_quizlink_disable_question' quiz.pk row.quiz_question_id %}"
+                                data-question="{% filter force_escape %}{{ row.order }}. {{ row.question.question|striptags|truncatechars:120 }}{% endfilter %}"
+                            >{% trans "Disable" %}</button>
+                        </div>
                     {% endif %}
                 </td>
                 <td style="padding:12px; vertical-align:top; border-bottom:1px solid #f1f5f9; color:#0f172a;">
@@ -84,7 +156,7 @@
             </tr>
         {% empty %}
             <tr>
-                <td colspan="6" style="padding:16px; text-align:center; color:#6b7280;">{% trans "This quiz has no questions yet." %}</td>
+                <td colspan="8" style="padding:16px; text-align:center; color:#6b7280;">{% trans "This quiz has no questions yet." %}</td>
             </tr>
         {% endfor %}
         </tbody>
@@ -93,5 +165,83 @@
     <p style="margin-top:16px;">
         <a class="button" href="{% url 'admin:quiz_quizlink_changelist' %}">&larr; {% trans "Back to quizzes" %}</a>
     </p>
+    {% if hidden_export_url %}
+        <p style="margin-top:8px;">
+            <a class="button" href="{{ hidden_export_url }}">{% trans "Download hidden questions" %}</a>
+        </p>
+    {% endif %}
+
+    <div id="disable-question-modal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); align-items:center; justify-content:center; z-index:1000; padding:16px;">
+        <div style="background:#ffffff; padding:24px; border-radius:8px; max-width:520px; width:100%; box-shadow:0 20px 40px rgba(15,23,42,0.25);">
+            <h2 style="margin-top:0; margin-bottom:8px; font-size:20px; color:#0f172a;">{% trans "Disable question" %}</h2>
+            <p id="disable-question-label" style="margin:0; color:#334155; font-size:14px;"></p>
+            <form method="post" id="disable-question-form" style="margin-top:16px;">
+                {% csrf_token %}
+                <label for="disable-question-comment" style="display:block; font-weight:600; color:#0f172a;">{% trans "Reason" %}</label>
+                <textarea id="disable-question-comment" name="comment" required style="width:100%; min-height:120px; margin-top:6px; padding:10px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; color:#0f172a; background:#ffffff;"></textarea>
+                <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:20px;">
+                    <button type="button" class="button" data-dismiss="modal">{% trans "Cancel" %}</button>
+                    <button type="submit" class="button" style="background:#b91c1c; border-color:#b91c1c; color:#ffffff;">{% trans "Disable" %}</button>
+                </div>
+            </form>
+        </div>
+    </div>
 </div>
+<script>
+(function() {
+    const modal = document.getElementById('disable-question-modal');
+    if (!modal) {
+        return;
+    }
+
+    const form = document.getElementById('disable-question-form');
+    const commentInput = document.getElementById('disable-question-comment');
+    const label = document.getElementById('disable-question-label');
+    const triggerButtons = document.querySelectorAll('.disable-question-button, .edit-comment-button');
+    const submitButton = form.querySelector('button[type="submit"]');
+    const defaultSubmitLabel = submitButton.textContent;
+
+    const openModal = function(button) {
+        form.action = button.dataset.action || '';
+        label.textContent = button.dataset.question || '';
+        commentInput.value = button.dataset.comment || '';
+        submitButton.textContent = button.dataset.submitLabel || defaultSubmitLabel;
+        modal.style.display = 'flex';
+        commentInput.focus();
+    };
+
+    const closeModal = function() {
+        modal.style.display = 'none';
+        form.action = '';
+        commentInput.value = '';
+        submitButton.textContent = defaultSubmitLabel;
+    };
+
+    triggerButtons.forEach(function(button) {
+        button.addEventListener('click', function(event) {
+            event.preventDefault();
+            openModal(button);
+        });
+    });
+
+    modal.addEventListener('click', function(event) {
+        if (event.target === modal) {
+            closeModal();
+        }
+    });
+
+    modal.querySelectorAll('[data-dismiss="modal"]').forEach(function(button) {
+        button.addEventListener('click', function(event) {
+            event.preventDefault();
+            closeModal();
+        });
+    });
+
+    document.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape' && modal.style.display === 'flex') {
+            closeModal();
+        }
+    });
+})();
+</script>
 {% endblock %}

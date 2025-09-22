@@ -5,8 +5,16 @@
 {% block extra_css %}
 <style>
     main.container {
-        width: min(1400px, 96vw);
-        padding: 40px 48px;
+        width: 100%;
+        max-width: none;
+        padding: 40px 64px;
+        box-sizing: border-box;
+    }
+
+    @media (max-width: 1200px) {
+        main.container {
+            padding: 32px 40px;
+        }
     }
 
     @media (max-width: 960px) {
@@ -14,6 +22,154 @@
             padding: 24px;
         }
     }
+
+    .results-table-wrapper {
+        overflow-x: auto;
+    }
+
+    .feedback-summary {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .feedback-empty {
+        color: #64748b;
+        font-size: 14px;
+    }
+
+    .feedback-comment {
+        padding: 8px 10px;
+        background: #f8fafc;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        font-size: 14px;
+        color: #0f172a;
+        white-space: pre-wrap;
+    }
+
+    .feedback-actions {
+        margin-top: 6px;
+    }
+
+    .feedback-trigger {
+        font-size: 14px;
+        padding: 6px 14px;
+    }
+
+    .feedback-saved-note {
+        margin-top: 4px;
+        font-size: 12px;
+        color: #1d4ed8;
+    }
+
+    .feedback-modal {
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.45);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 2000;
+        padding: 16px;
+    }
+
+    .feedback-toast {
+        margin-bottom: 20px;
+        padding: 14px 16px;
+        border-radius: 8px;
+        border: 1px solid transparent;
+        display: none;
+        font-size: 14px;
+    }
+
+    .feedback-toast.success {
+        background: #ecfdf3;
+        border-color: #86efac;
+        color: #166534;
+    }
+
+    .feedback-toast.warning {
+        background: #fef3c7;
+        border-color: #fcd34d;
+        color: #92400e;
+    }
+
+    .feedback-toast.error {
+        background: #fef2f2;
+        border-color: #fecaca;
+        color: #7f1d1d;
+    }
+
+    .feedback-modal__dialog {
+        background: #ffffff;
+        border-radius: 10px;
+        padding: 24px;
+        width: min(520px, 100%);
+        box-shadow: 0 24px 48px rgba(15, 23, 42, 0.2);
+    }
+
+    .feedback-modal__dialog h2 {
+        margin-top: 0;
+        margin-bottom: 8px;
+        font-size: 20px;
+        color: #0f172a;
+    }
+
+    .feedback-modal__label {
+        margin: 0 0 16px;
+        color: #475569;
+        font-size: 14px;
+    }
+
+    .feedback-modal textarea {
+        width: 100%;
+        min-height: 140px;
+        resize: vertical;
+        padding: 12px;
+        border-radius: 8px;
+        border: 1px solid #cbd5e1;
+        font-size: 14px;
+        color: #0f172a;
+        background: #ffffff;
+        box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.06);
+    }
+
+    .feedback-modal textarea::placeholder {
+        color: #94a3b8;
+    }
+
+    .feedback-modal__actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 18px;
+    }
+
+    .feedback-modal__actions .button {
+        font-size: 14px;
+        padding: 8px 16px;
+        border-radius: 999px;
+        border: 1px solid #d0d7ea;
+        background: #f8fafc;
+        color: #1d1f27;
+        cursor: pointer;
+    }
+
+    .feedback-modal__actions .button:hover {
+        background: #e2e8f0;
+    }
+
+    .feedback-modal__actions .button.primary {
+        background: #2563eb;
+        border-color: #1d4ed8;
+        color: #ffffff;
+    }
+
+    .feedback-modal__actions .button.primary:hover {
+        background: #1d4ed8;
+    }
+
 </style>
 {% endblock %}
 
@@ -38,8 +194,14 @@
         </p>
     </div>
 
+    <div id="feedback-toast" class="feedback-toast{% if feedback_question_id %} success{% endif %}"{% if feedback_question_id %} style="display:block;"{% endif %}>
+        {% if feedback_question_id %}
+            Thanks for sharing your feedback! You can update or clear it below if needed.
+        {% endif %}
+    </div>
+
     <div class="results-table-wrapper" style="overflow-x:auto;">
-        <table style="width:100%; border-collapse:collapse; color:#1f2933; min-width:960px;">
+        <table style="width:100%; border-collapse:collapse; color:#1f2933; min-width:1100px;">
             <thead>
                 <tr style="background:#e2e8f0;">
                     <th style="text-align:left; padding:10px 12px;">#</th>
@@ -48,6 +210,7 @@
                     <th style="text-align:left; padding:10px 12px;">Correct</th>
                     <th style="text-align:left; padding:10px 12px;">Weight</th>
                     <th style="text-align:left; padding:10px 12px;">Status</th>
+                    <th style="text-align:left; padding:10px 12px;">Feedback</th>
                     <th style="text-align:left; padding:10px 12px;">Time (s)</th>
                 </tr>
             </thead>
@@ -92,6 +255,26 @@
                             <span style="color:#64748b;">Not answered</span>
                         {% endif %}
                     </td>
+                    <td style="padding:12px; vertical-align:top;" id="feedback-cell-{{ row.quiz_question_id }}">
+                        <div class="feedback-summary">
+                            <div class="feedback-comment" data-role="comment"{% if not row.has_feedback %} style="display:none;"{% endif %}>{{ row.feedback_comment|default_if_none:'' }}</div>
+                            <div class="feedback-empty" data-role="empty"{% if row.has_feedback %} style="display:none;"{% endif %}>No feedback yet.</div>
+                            {% if feedback_question_id and feedback_question_id|stringformat:"s" == row.quiz_question_id|stringformat:"s" %}
+                                <span class="feedback-saved-note">Thanks! Your note is saved.</span>
+                            {% endif %}
+                        </div>
+                        <div class="feedback-actions">
+                            <button
+                                type="button"
+                                class="button feedback-trigger"
+                                data-action="{% url 'quiz:feedback' quiz.token row.quiz_question_id %}"
+                                data-question="{% filter force_escape %}{{ row.order }}. {{ row.question.question|striptags|truncatechars:160 }}{% endfilter %}"
+                                data-comment="{{ row.feedback_comment|default_if_none:''|escape }}"
+                                data-row-id="{{ row.quiz_question_id }}"
+                                data-has-feedback="{{ row.has_feedback|yesno:'true,false' }}"
+                            >{% if row.has_feedback %}Edit feedback{% else %}Add feedback{% endif %}</button>
+                        </div>
+                    </td>
                     <td style="padding:12px; vertical-align:top;">
                         {% if row.time_spent %}
                             {{ row.time_spent|floatformat:0 }}
@@ -104,6 +287,225 @@
             </tbody>
         </table>
     </div>
+    <div id="feedback-modal" class="feedback-modal" aria-hidden="true">
+        <div class="feedback-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="feedback-modal-heading">
+            <h2 id="feedback-modal-heading">Leave feedback</h2>
+            <p class="feedback-modal__label" id="feedback-modal-label"></p>
+            <form id="feedback-form" method="post">
+                {% csrf_token %}
+                <textarea id="feedback-comment" name="comment" placeholder="Let the teacher know what could be improved"></textarea>
+                <div class="feedback-modal__actions">
+                    <button type="button" class="button" data-dismiss="modal">Cancel</button>
+                    <button type="button" class="button" id="feedback-clear-button">Clear</button>
+                    <button type="submit" class="button primary">Send</button>
+                </div>
+            </form>
+        </div>
+    </div>
 </section>
 {% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(() => {
+    const modal = document.getElementById('feedback-modal');
+    if (!modal) {
+        return;
+    }
+
+    const form = document.getElementById('feedback-form');
+    const commentInput = document.getElementById('feedback-comment');
+    const questionLabel = document.getElementById('feedback-modal-label');
+    const submitButton = form.querySelector('button[type="submit"]');
+    const clearButton = document.getElementById('feedback-clear-button');
+    const cancelButtons = modal.querySelectorAll('[data-dismiss="modal"]');
+    const triggers = document.querySelectorAll('.feedback-trigger');
+    const csrfInput = form.querySelector('input[name="csrfmiddlewaretoken"]');
+    const toast = document.getElementById('feedback-toast');
+
+    let activeTrigger = null;
+    let hideToastTimer = null;
+
+    const showToast = (message, variant = 'success') => {
+        if (!toast) {
+            return;
+        }
+        toast.textContent = message;
+        toast.className = `feedback-toast ${variant}`;
+        toast.style.display = 'block';
+        if (hideToastTimer) {
+            window.clearTimeout(hideToastTimer);
+        }
+        hideToastTimer = window.setTimeout(() => {
+            toast.style.display = 'none';
+            toast.textContent = '';
+            toast.className = 'feedback-toast';
+        }, 5000);
+    };
+
+    if (toast && toast.textContent.trim()) {
+        const variant = toast.classList.contains('warning')
+            ? 'warning'
+            : toast.classList.contains('error')
+                ? 'error'
+                : 'success';
+        showToast(toast.textContent.trim(), variant);
+    }
+
+    const setClearButtonHidden = (shouldHide) => {
+        if (clearButton) {
+            clearButton.hidden = shouldHide;
+        }
+    };
+
+    const setClearButtonDisabled = (flag) => {
+        if (clearButton) {
+            clearButton.disabled = flag;
+        }
+    };
+
+    const openModal = (trigger) => {
+        activeTrigger = trigger;
+        form.action = trigger.dataset.action;
+        commentInput.value = trigger.dataset.comment || '';
+        questionLabel.textContent = trigger.dataset.question || '';
+        commentInput.focus();
+        modal.style.display = 'flex';
+        setClearButtonHidden(!(trigger.dataset.hasFeedback === 'true'));
+    };
+
+    const closeModal = () => {
+        modal.style.display = 'none';
+        form.action = '';
+        commentInput.value = '';
+        questionLabel.textContent = '';
+        activeTrigger = null;
+    };
+
+    const updateFeedbackCell = (payload) => {
+        const cell = document.getElementById(`feedback-cell-${payload.quiz_question_id}`);
+        if (!cell) {
+            return;
+        }
+        const commentBox = cell.querySelector('[data-role="comment"]');
+        const emptyBox = cell.querySelector('[data-role="empty"]');
+        if (payload.has_feedback) {
+            if (commentBox) {
+                commentBox.textContent = payload.comment;
+                commentBox.style.display = '';
+            }
+            if (emptyBox) {
+                emptyBox.style.display = 'none';
+            }
+        } else {
+            if (commentBox) {
+                commentBox.textContent = '';
+                commentBox.style.display = 'none';
+            }
+            if (emptyBox) {
+                emptyBox.style.display = '';
+            }
+        }
+    };
+
+    const setTriggerState = (trigger, payload) => {
+        trigger.dataset.comment = payload.comment || '';
+        trigger.dataset.hasFeedback = payload.has_feedback ? 'true' : 'false';
+        trigger.textContent = payload.has_feedback ? 'Edit feedback' : 'Add feedback';
+    };
+
+    const handleSuccess = (payload) => {
+        if (activeTrigger) {
+            updateFeedbackCell(payload);
+            setTriggerState(activeTrigger, payload);
+        }
+
+        setClearButtonHidden(!payload.has_feedback);
+
+        if (payload.was_trimmed) {
+            showToast('Feedback saved, but the message was trimmed to the maximum length.', 'warning');
+        } else if (payload.has_feedback) {
+            showToast('Thanks! Your feedback was saved.', 'success');
+        } else {
+            showToast('Feedback cleared.', 'success');
+        }
+
+        closeModal();
+    };
+
+    const submitFormData = (formData) => {
+        if (!form.action) {
+            return;
+        }
+
+        submitButton.disabled = true;
+        setClearButtonDisabled(true);
+
+        fetch(form.action, {
+            method: 'POST',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRFToken': csrfInput ? csrfInput.value : '',
+            },
+            body: formData,
+        })
+            .then((response) => {
+                submitButton.disabled = false;
+                setClearButtonDisabled(false);
+                if (!response.ok) {
+                    throw new Error('Request failed');
+                }
+                return response.json();
+            })
+            .then(handleSuccess)
+            .catch(() => {
+                submitButton.disabled = false;
+                setClearButtonDisabled(false);
+                showToast('Could not save feedback. Please try again.', 'error');
+            });
+    };
+
+    triggers.forEach((trigger) => {
+        trigger.addEventListener('click', (event) => {
+            event.preventDefault();
+            openModal(trigger);
+        });
+    });
+
+    cancelButtons.forEach((button) => {
+        button.addEventListener('click', (event) => {
+            event.preventDefault();
+            closeModal();
+        });
+    });
+
+    modal.addEventListener('click', (event) => {
+        if (event.target === modal) {
+            closeModal();
+        }
+    });
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && modal.style.display === 'flex') {
+            closeModal();
+        }
+    });
+
+    form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const formData = new FormData(form);
+        submitFormData(formData);
+    });
+
+    if (clearButton) {
+        clearButton.addEventListener('click', (event) => {
+            event.preventDefault();
+            const formData = new FormData(form);
+            formData.set('comment', '');
+            submitFormData(formData);
+        });
+    }
+})();
+</script>
 {% endblock %}
