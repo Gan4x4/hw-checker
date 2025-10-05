@@ -5,6 +5,9 @@
     {% if has_quizzes %}
         <button type="submit" name="_export_links" value="1" formnovalidate class="button">{% trans "Export quiz links" %}</button>
     {% endif %}
+    {% if can_reset %}
+        <button type="submit" name="_reset_test" value="1" formnovalidate class="button">{% trans "Reset test" %}</button>
+    {% endif %}
     {% if can_start %}
         <button type="submit" name="_start_test" value="1" formnovalidate class="button default">{% trans "Start test" %}</button>
     {% endif %}
@@ -14,6 +17,9 @@
 {% block submit_buttons_bottom %}
     {% if has_quizzes %}
         <button type="submit" name="_export_links" value="1" formnovalidate class="button">{% trans "Export quiz links" %}</button>
+    {% endif %}
+    {% if can_reset %}
+        <button type="submit" name="_reset_test" value="1" formnovalidate class="button">{% trans "Reset test" %}</button>
     {% endif %}
     {% if can_start %}
         <button type="submit" name="_start_test" value="1" formnovalidate class="button default">{% trans "Start test" %}</button>

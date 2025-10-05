@@ -133,6 +133,18 @@ try:
 except (TypeError, ValueError):
     QUIZ_MAX_QUESTIONS = 7
 
+raw_quiz_image_wrap_width = os.environ.get("QUIZ_IMAGE_WRAP_WIDTH", "79") #PEP8
+try:
+    QUIZ_IMAGE_WRAP_WIDTH = int(raw_quiz_image_wrap_width)
+except (TypeError, ValueError):
+    QUIZ_IMAGE_WRAP_WIDTH = 79
+
+raw_quiz_image_max_pixel_width = os.environ.get("QUIZ_IMAGE_MAX_PIXEL_WIDTH", "900")
+try:
+    QUIZ_IMAGE_MAX_PIXEL_WIDTH = int(raw_quiz_image_max_pixel_width)
+except (TypeError, ValueError):
+    QUIZ_IMAGE_MAX_PIXEL_WIDTH = 900
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 

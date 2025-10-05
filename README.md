@@ -5,6 +5,7 @@
 Activate your virtualenv and dependencies, then launch Django with:
 
 ```bash
+source .venv/bin/acvtvate
 python manage.py runserver
 ```
 

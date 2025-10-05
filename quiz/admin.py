@@ -21,7 +21,12 @@ from django.utils.translation import gettext_lazy as _
 from .forms import QuizImportForm, StudentImportForm, TestCreationForm
 from .management.commands.import_questions import QuizImportError, import_quiz_from_json
 from .models import Attempt, Question, QuizLink, QuizQuestion, Student, Test, TestState
-from .utils import import_students_from_content, sync_students_from_csv
+from .utils import (
+    import_students_from_content,
+    sync_students_from_csv,
+    wrap_code_snippet,
+    wrap_text_html,
+)
 
 
 _thread_locals = local()
@@ -468,6 +473,27 @@ class QuizLinkAdmin(admin.ModelAdmin):
             for attempt in quiz.attempts.select_related("question").order_by("created_at")
         }
 
+        limit = quiz._question_limit()
+        quiz.ensure_included_question_ids()
+        included_ids: set[int] = set(quiz.included_question_ids or [])
+
+        question_to_quiz_question: dict[int, int] = {
+            quiz_question.question_id: quiz_question.id for quiz_question in quiz_questions
+        }
+
+        for question_id in attempts.keys():
+            quiz_question_id = question_to_quiz_question.get(question_id)
+            if quiz_question_id:
+                included_ids.add(quiz_question_id)
+
+        if not included_ids and limit is not None:
+            fallback = [
+                quiz_question.id
+                for quiz_question in quiz_questions
+                if not quiz_question.is_disabled
+            ][:limit]
+            included_ids.update(fallback)
+
         rows = []
         correct = 0
         attempted = 0
@@ -488,9 +514,14 @@ class QuizLinkAdmin(admin.ModelAdmin):
             comment = quiz_question.disabled_comment or ""
             has_feedback = bool(comment and not is_disabled)
 
+            is_excluded = False
+            if not is_disabled and included_ids and quiz_question.id not in included_ids:
+                is_excluded = True
+                status = "excluded"
+
             if is_disabled:
                 status = "disabled"
-            else:
+            elif not is_excluded:
                 if attempt:
                     attempted += 1
                     status = "correct" if attempt.is_correct else "incorrect"
@@ -501,6 +532,16 @@ class QuizLinkAdmin(admin.ModelAdmin):
             correct_answer = None
             if 0 <= question.correct_answer_index < len(answers):
                 correct_answer = answers[question.correct_answer_index]
+
+            answers_display = [
+                {"raw": answer, "html": wrap_text_html(answer)} for answer in answers
+            ]
+
+            question_html = wrap_text_html(question.question)
+            explanation_html = wrap_text_html(question.explanation)
+            correct_answer_html = wrap_text_html(correct_answer)
+            comment_html = wrap_text_html(comment)
+            code_snippet_wrapped = wrap_code_snippet(question.code_snippet)
 
             rows.append(
                 {
@@ -513,15 +554,24 @@ class QuizLinkAdmin(admin.ModelAdmin):
                     "status": status,
                     "weight": question.penalty,
                     "is_disabled": is_disabled,
+                    "is_excluded": is_excluded,
                     "disabled_comment": comment,
                     "has_feedback": has_feedback,
                     "quiz_question_id": quiz_question.id,
+                    "question_html": question_html,
+                    "answers_display": answers_display,
+                    "correct_answer_html": correct_answer_html,
+                    "explanation_html": explanation_html,
+                    "code_snippet_wrapped": code_snippet_wrapped,
+                    "disabled_comment_html": comment_html,
+                    "feedback_comment_html": comment_html,
                 }
             )
 
         score_percent = (correct / total_active * 100) if total_active else None
         disabled_count = sum(1 for row in rows if row["is_disabled"])
         feedback_count = sum(1 for row in rows if row["has_feedback"])
+        excluded_count = sum(1 for row in rows if row.get("is_excluded"))
 
         context = {
             **self.admin_site.each_context(request),
@@ -536,6 +586,7 @@ class QuizLinkAdmin(admin.ModelAdmin):
             },
             "disabled_count": disabled_count,
             "feedback_count": feedback_count,
+            "excluded_count": excluded_count,
             "hidden_export_url": (
                 reverse("admin:quiz_quizlink_export_hidden", args=[quiz.pk])
                 if disabled_count
@@ -683,21 +734,28 @@ class QuizLinkAdmin(admin.ModelAdmin):
 
     @admin.display(description=_("Score"), ordering="correct_total")
     def score_display(self, obj):
-        total_questions = getattr(obj, "question_total", None)
-        if total_questions is None:
-            total_questions = obj.total_questions()
+        included_ids = set(getattr(obj, "included_question_ids", None) or [])
 
-        correct_answers = getattr(obj, "correct_total", None)
-        if correct_answers is None:
-            correct_answers = (
-                obj.attempts.filter(
-                    is_correct=True,
-                    question__quizquestion__quiz=obj,
-                    question__quizquestion__is_disabled=False,
-                )
-                .distinct()
-                .count()
+        if included_ids:
+            total_questions = obj.quiz_questions.filter(
+                id__in=included_ids,
+                is_disabled=False,
+            ).count()
+        else:
+            total_questions = getattr(obj, "question_total", None)
+            if total_questions is None:
+                total_questions = obj.total_questions()
+
+        attempts_queryset = obj.attempts.filter(
+            is_correct=True,
+            question__quizquestion__quiz=obj,
+            question__quizquestion__is_disabled=False,
+        )
+        if included_ids:
+            attempts_queryset = attempts_queryset.filter(
+                question__quizquestion__id__in=included_ids
             )
+        correct_answers = attempts_queryset.distinct().count()
 
         if not total_questions:
             return "—"

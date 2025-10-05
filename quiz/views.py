@@ -13,6 +13,7 @@ from django.views.generic import TemplateView, View
 from django.utils import timezone
 
 from .models import Attempt, QuizLink, TestState
+from .utils import wrap_code_snippet, wrap_text_html
 
 
 class HomeView(TemplateView):
@@ -140,6 +141,7 @@ class QuizSessionView(View):
 
         if "start_quiz" in request.POST:
             self._clear_all_timers(request, quiz)
+            quiz.ensure_included_question_ids()
             request.session[start_key] = True
             request.session.modified = True
             return redirect("quiz:session", token=quiz.token)
@@ -330,7 +332,8 @@ class QuizSessionView(View):
 
     @staticmethod
     def _build_results(quiz: QuizLink) -> tuple[list[dict], dict]:
-        quiz_questions = list(quiz.ordered_quiz_questions())
+        quiz.ensure_included_question_ids()
+        quiz_questions = list(quiz.included_quiz_questions())
         question_ids = [quiz_question.question_id for quiz_question in quiz_questions]
 
         attempts_queryset = quiz.attempts.select_related("question").order_by("created_at")
@@ -349,6 +352,9 @@ class QuizSessionView(View):
             question = quiz_question.question
             attempt = attempts.get(question.id)
             answers = list(question.answers or [])
+            answers_display = [
+                {"raw": answer, "html": wrap_text_html(answer)} for answer in answers
+            ]
             selected_answer = None
             status = "unanswered"
             time_spent = None
@@ -366,6 +372,9 @@ class QuizSessionView(View):
             correct_answer = None
             if 0 <= question.correct_answer_index < len(answers):
                 correct_answer = answers[question.correct_answer_index]
+                correct_answer_html = wrap_text_html(correct_answer)
+            else:
+                correct_answer_html = ""
 
             feedback_comment = ""
             has_feedback = False
@@ -373,19 +382,32 @@ class QuizSessionView(View):
                 feedback_comment = quiz_question.disabled_comment
                 has_feedback = True
 
+            comment_html = wrap_text_html(feedback_comment)
+            disabled_comment_html = wrap_text_html(quiz_question.disabled_comment)
+            question_html = wrap_text_html(question.question)
+            explanation_html = wrap_text_html(question.explanation)
+            code_snippet_wrapped = wrap_code_snippet(question.code_snippet)
+
             rows.append(
                 {
                     "order": quiz_question.order,
                     "question": question,
                     "answers": answers,
+                    "answers_display": answers_display,
                     "selected_answer": selected_answer,
                     "correct_answer": correct_answer,
+                    "correct_answer_html": correct_answer_html,
                     "status": status,
                     "weight": question.penalty,
                     "time_spent": time_spent,
                     "quiz_question_id": quiz_question.id,
                     "feedback_comment": feedback_comment,
                     "has_feedback": has_feedback,
+                    "question_html": question_html,
+                    "explanation_html": explanation_html,
+                    "code_snippet_wrapped": code_snippet_wrapped,
+                    "feedback_comment_html": comment_html,
+                    "disabled_comment_html": disabled_comment_html,
                 }
             )
 

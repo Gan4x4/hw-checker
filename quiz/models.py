@@ -14,26 +14,38 @@ from django.utils.translation import gettext_lazy as _
 
 from PIL import Image, ImageDraw, ImageFont
 
+from .utils import wrap_code_snippet, wrap_text_to_lines
+
 
 def _answers_default() -> List[str]:
     return []
 
 
-def _load_font(size: int = 16) -> "ImageFont.ImageFont":
+def _load_font(size: int = 16, *, bold: bool = False) -> "ImageFont.ImageFont":
     """Load a font that supports ASCII and Cyrillic, falling back to default."""
 
-    candidate_paths = [
+    normal_candidates = [
         Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
         Path("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"),
         Path("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"),
     ]
+    bold_candidates = [
+        Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+        Path("/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"),
+        Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
+    ]
 
-    for font_path in candidate_paths:
+    candidates = bold_candidates if bold else normal_candidates
+
+    for font_path in candidates:
         if font_path.exists():
             try:
                 return ImageFont.truetype(str(font_path), size=size)
             except OSError:
                 continue
+
+    if bold:
+        return _load_font(size=size, bold=False)
 
     return ImageFont.load_default()
 
@@ -81,6 +93,7 @@ class Question(models.Model):
         """
 
         main_font = _load_font()
+        question_font = _load_font(bold=True)
         source_font = _load_font(size=12)
 
         def line_height(font: "ImageFont.ImageFont", base: int) -> int:
@@ -90,31 +103,59 @@ class Question(models.Model):
             return int(height + padding)
 
         main_height = line_height(main_font, 6)
+        question_height = line_height(question_font, 6)
         source_height = line_height(source_font, 4)
 
         render_lines: List[tuple[str, "ImageFont.ImageFont", int]] = []
 
+        wrap_width_raw = getattr(settings, "QUIZ_IMAGE_WRAP_WIDTH", 60)
+        max_pixel_width_raw = getattr(settings, "QUIZ_IMAGE_MAX_PIXEL_WIDTH", 900)
+
+        def _positive_int(value, default):
+            try:
+                parsed = int(value)
+            except (TypeError, ValueError):
+                return default
+            return parsed if parsed > 0 else default
+
+        wrap_width = _positive_int(wrap_width_raw, 60)
+        max_pixel_width = _positive_int(max_pixel_width_raw, 900)
+
+        normalized_question = (self.question or "").replace("\u00A0", " ")
+        wrapped_question = wrap_text_to_lines(normalized_question, width=wrap_width) or [""]
+
+        longest_line = max(
+            (main_font.getlength(line) for line in wrapped_question if line),
+            default=0,
+        )
+        while longest_line > max_pixel_width and wrap_width > 10:
+            wrap_width = max(wrap_width - 5, 10)
+            wrapped_question = wrap_text_to_lines(normalized_question, width=wrap_width) or [""]
+            longest_line = max(
+                (main_font.getlength(line) for line in wrapped_question if line),
+                default=0,
+            )
+
+        if wrapped_question and wrapped_question[-1] == "":
+            wrapped_question = wrapped_question[:-1]
+
+        question_present = bool(wrapped_question)
+        for text_line in wrapped_question:
+            render_lines.append((text_line, question_font, question_height))
+
+        if question_present:
+            render_lines.append(("", question_font, question_height))
+
         if self.code_snippet:
-            snippet_lines = self.code_snippet.rstrip().splitlines() or [""]
+            snippet_text = wrap_code_snippet(self.code_snippet, width=wrap_width)
+            if question_present:
+                render_lines.append(("-------------", main_font, main_height))
+                render_lines.append(("", main_font, main_height))
+
+            snippet_lines = snippet_text.rstrip().splitlines() or [""]
             for snippet_line in snippet_lines:
                 render_lines.append((snippet_line, main_font, main_height))
             render_lines.append(("", main_font, main_height))
-
-        wrapped_question: List[str] = []
-        paragraphs = [segment.strip() for segment in self.question.split("\n\n") if segment.strip()]
-        if not paragraphs:
-            paragraphs = [self.question.strip()]
-        for paragraph in paragraphs:
-            wrapped_question.extend(textwrap.wrap(paragraph, width=60) or [""])
-            wrapped_question.append("")
-        if not wrapped_question:
-            wrapped_question = [""]
-        # Remove trailing blank line introduced by wrapping logic
-        if wrapped_question and wrapped_question[-1] == "":
-            wrapped_question.pop()
-
-        for text_line in wrapped_question:
-            render_lines.append((text_line, main_font, main_height))
 
         if self.source:
             if render_lines and render_lines[-1][0] != "":
@@ -178,6 +219,7 @@ class QuizLink(models.Model):
         on_delete=models.SET_NULL,
     )
     questions = models.ManyToManyField(Question, through="QuizQuestion", related_name="quiz_links")
+    included_question_ids = models.JSONField(default=list, blank=True)
 
     class Meta:
         ordering = ["-created_at"]
@@ -195,6 +237,39 @@ class QuizLink(models.Model):
         if limit is not None:
             return queryset[:limit]
         return queryset
+
+    def ensure_included_question_ids(self, *, force: bool = False) -> None:
+        if self.included_question_ids and not force:
+            return
+        snapshot = self._compute_included_question_ids()
+        if snapshot != self.included_question_ids:
+            self.included_question_ids = snapshot
+            self.save(update_fields=["included_question_ids"])
+
+    def _compute_included_question_ids(self) -> list[int]:
+        queryset = (
+            self.quiz_questions.filter(is_disabled=False)
+            .order_by("order")
+        )
+        limit = self._question_limit()
+        if limit is not None:
+            queryset = queryset[:limit]
+        return [quiz_question.id for quiz_question in queryset]
+
+    def included_quiz_questions(self) -> list["QuizQuestion"]:
+        if self.included_question_ids:
+            mapping = {
+                quiz_question.id: quiz_question
+                for quiz_question in self.quiz_questions.select_related("question").order_by("order")
+                if quiz_question.id in self.included_question_ids
+            }
+            ordered: list[QuizQuestion] = []
+            for quiz_question_id in self.included_question_ids:
+                quiz_question = mapping.get(quiz_question_id)
+                if quiz_question:
+                    ordered.append(quiz_question)
+            return ordered
+        return list(self.ordered_quiz_questions())
 
     def total_questions(self) -> int:
         limit = self._question_limit()
@@ -234,6 +309,10 @@ class QuizLink(models.Model):
             if self.completed_at is not None:
                 self.completed_at = None
                 self.save(update_fields=["completed_at"])
+
+        if self.included_question_ids:
+            self.included_question_ids = []
+            self.save(update_fields=["included_question_ids"]) 
 
         if hasattr(self, "_prefetched_objects_cache"):
             self._prefetched_objects_cache.pop("attempts", None)

@@ -1,4 +1,5 @@
 {% extends "quiz/base.html" %}
+{% load quiz_extras %}
 
 {% block title %}Quiz completed{% endblock %}
 
@@ -219,23 +220,23 @@
                 <tr style="border-bottom:1px solid #e2e8f0; {% if row.status == 'correct' %}background:#f0fdf4;{% elif row.status == 'incorrect' %}background:#fef2f2;{% endif %}">
                     <td style="padding:12px; vertical-align:top;">{{ row.order }}</td>
                     <td style="padding:12px; vertical-align:top;">
-                        <div style="font-weight:600; color:#0f172a;">{{ row.question.question|linebreaksbr }}</div>
+                        <div style="font-weight:600; color:#0f172a;">{{ row.question_html|safe }}</div>
                         {% if row.question.code_snippet %}
-                        <pre style="margin-top:8px; padding:12px; background:#111827; color:#f9fafb; border-radius:8px; overflow:auto;">{{ row.question.code_snippet }}</pre>
+                        <pre style="margin-top:8px; padding:12px; background:#0f172a; color:#f9fafb; border-radius:8px; overflow:auto;">{{ row.code_snippet_wrapped }}</pre>
                         {% endif %}
                         {% if row.question.source %}
                             <div style="margin-top:6px; font-size:12px; color:#475569;">Source: {{ row.question.source }}</div>
                         {% endif %}
                     </td>
                     <td style="padding:12px; vertical-align:top;">
-                        {% if row.answers %}
+                        {% if row.answers_display %}
                             <ul style="margin:0; padding-left:18px;">
-                                {% for answer in row.answers %}
+                                {% for answer in row.answers_display %}
                                 <li style="margin-bottom:4px;">
-                                    {% if row.selected_answer == answer %}
-                                        <strong>{{ answer }}</strong>
+                                    {% if row.selected_answer == answer.raw %}
+                                        <strong>{{ answer.html|safe }}</strong>
                                     {% else %}
-                                        {{ answer }}
+                                        {{ answer.html|safe }}
                                     {% endif %}
                                 </li>
                                 {% endfor %}
@@ -244,7 +245,7 @@
                             <span style="color:#64748b;">No answers available</span>
                         {% endif %}
                     </td>
-                    <td style="padding:12px; vertical-align:top; color:#0f172a;">{{ row.correct_answer }}</td>
+                    <td style="padding:12px; vertical-align:top; color:#0f172a;">{{ row.correct_answer_html|safe }}</td>
                     <td style="padding:12px; vertical-align:top; color:#0f172a;">{{ row.weight|floatformat:2 }}</td>
                     <td style="padding:12px; vertical-align:top;">
                         {% if row.status == 'correct' %}
@@ -257,7 +258,7 @@
                     </td>
                     <td style="padding:12px; vertical-align:top;" id="feedback-cell-{{ row.quiz_question_id }}">
                         <div class="feedback-summary">
-                            <div class="feedback-comment" data-role="comment"{% if not row.has_feedback %} style="display:none;"{% endif %}>{{ row.feedback_comment|default_if_none:'' }}</div>
+                            <div class="feedback-comment" data-role="comment"{% if not row.has_feedback %} style="display:none;"{% endif %}>{{ row.feedback_comment_html|safe }}</div>
                             <div class="feedback-empty" data-role="empty"{% if row.has_feedback %} style="display:none;"{% endif %}>No feedback yet.</div>
                             {% if feedback_question_id and feedback_question_id|stringformat:"s" == row.quiz_question_id|stringformat:"s" %}
                                 <span class="feedback-saved-note">Thanks! Your note is saved.</span>

@@ -1,5 +1,5 @@
 {% extends "admin/base_site.html" %}
-{% load i18n %}
+{% load i18n quiz_extras %}
 
 {% block title %}{% trans "Quiz results" %} - {{ quiz.title|default:quiz.token }}{% endblock %}
 
@@ -18,6 +18,10 @@
             {% if feedback_count %}
                 <br>
                 {% blocktrans count feedback=feedback_count %}{{ feedback }} question flagged by student{% plural %}{{ feedback }} questions flagged by students{% endblocktrans %}
+            {% endif %}
+            {% if excluded_count %}
+                <br>
+                {% blocktrans count excluded=excluded_count %}{{ excluded }} question excluded by limit{% plural %}{{ excluded }} questions excluded by limit{% endblocktrans %}
             {% endif %}
         {% else %}
             {% if disabled_count %}
@@ -51,26 +55,29 @@
         </thead>
         <tbody>
         {% for row in rows %}
-            <tr style="background:#ffffff;{% if row.is_disabled %} background:#f3f4f6;{% elif row.has_feedback %} background:#fff7ed;{% elif row.status == 'correct' %} background:#e6f9ed;{% elif row.status == 'incorrect' %} background:#ffe8e8;{% endif %}">
+            <tr style="background:#ffffff;{% if row.is_disabled %} background:#f3f4f6;{% elif row.is_excluded %} background:#f8fafc;{% elif row.has_feedback %} background:#fff7ed;{% elif row.status == 'correct' %} background:#e6f9ed;{% elif row.status == 'incorrect' %} background:#ffe8e8;{% endif %}">
                 <td style="padding:12px; vertical-align:top; border-bottom:1px solid #f1f5f9; color:#0f172a;">{{ row.order }}</td>
                 <td style="padding:12px; vertical-align:top; border-bottom:1px solid #f1f5f9;">
-                    <div style="font-weight:600; color:#0f172a;">{{ row.question.question|linebreaksbr }}</div>
+                    <div style="font-weight:600; color:#0f172a;">{{ row.question_html|safe }}</div>
                     {% if row.question.code_snippet %}
-                        <pre style="margin-top:8px; padding:12px; background:#f1f5f9; border:1px solid #cbd5e1; border-radius:6px; color:#0f172a;">{{ row.question.code_snippet }}</pre>
+                        <pre style="margin-top:8px; padding:12px; background:#f1f5f9; border:1px solid #cbd5e1; border-radius:6px; color:#0f172a;">{{ row.code_snippet_wrapped }}</pre>
                     {% endif %}
                     {% if row.question.source %}
                         <div style="margin-top:6px; font-size:12px; color:#475569;">Source: {{ row.question.source }}</div>
                     {% endif %}
                 </td>
                 <td style="padding:12px; vertical-align:top; border-bottom:1px solid #f1f5f9;">
-                    {% if row.answers %}
+                    {% if row.answers_display %}
                         <ul style="margin:0; padding-left:18px; color:#0f172a;">
-                            {% for answer in row.answers %}
+                            {% for answer in row.answers_display %}
                                 <li style="margin-bottom:4px;">
-                                    {% if row.selected_answer == answer %}
-                                        <strong>{{ answer }}</strong>
+                                    {% if row.selected_answer == answer.raw %}
+                                        <strong>{{ answer.html|safe }}</strong>
                                     {% else %}
-                                        {{ answer }}
+                                        {{ answer.html|safe }}
+                                    {% endif %}
+                                    {% if row.correct_answer == answer.raw %}
+                                        <span style="color:#047857; font-weight:600;">{% trans "(Correct)" %}</span>
                                     {% endif %}
                                 </li>
                             {% endfor %}
@@ -80,15 +87,17 @@
                     {% endif %}
                 </td>
                 <td style="padding:12px; vertical-align:top; border-bottom:1px solid #f1f5f9; color:#0f172a;">
-                    {{ row.correct_answer }}
+                    {{ row.correct_answer_html|safe }}
                     {% if row.question.explanation %}
-                        <div style="margin-top:6px; font-size:12px; color:#475569;">{{ row.question.explanation }}</div>
+                        <div style="margin-top:6px; font-size:12px; color:#475569;">{{ row.explanation_html|safe }}</div>
                     {% endif %}
                 </td>
                 <td style="padding:12px; vertical-align:top; border-bottom:1px solid #f1f5f9; color:#0f172a;">{{ row.weight|floatformat:2 }}</td>
                 <td style="padding:12px; vertical-align:top; border-bottom:1px solid #f1f5f9;">
                     {% if row.is_disabled %}
                         <span style="color:#475569; font-weight:700;">{% trans "Disabled" %}</span>
+                    {% elif row.is_excluded %}
+                        <span style="color:#1f2937; font-weight:700;">{% trans "Excluded" %}</span>
                     {% elif row.status == 'correct' %}
                         <span style="color:#047857; font-weight:700;">{% trans "Correct" %}</span>
                     {% elif row.status == 'incorrect' %}
@@ -101,7 +110,7 @@
                     {% if row.is_disabled %}
                         <span style="color:#b91c1c; font-weight:600;">{% trans "Hidden" %}</span>
                         {% if row.disabled_comment %}
-                            <div style="margin-top:6px; font-size:12px; color:#475569; white-space:pre-wrap;">{{ row.disabled_comment|linebreaksbr }}</div>
+                            <div style="margin-top:6px; font-size:12px; color:#475569; white-space:pre-wrap;">{{ row.disabled_comment_html|safe }}</div>
                         {% endif %}
                         <div style="margin-top:8px; display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
                             <button
@@ -119,7 +128,7 @@
                         </div>
                     {% elif row.has_feedback %}
                         <span style="color:#c2410c; font-weight:600;">{% trans "Flagged by student" %}</span>
-                        <div style="margin-top:6px; font-size:12px; color:#92400e; white-space:pre-wrap; background:#fff7ed; border:1px solid #fb923c; border-radius:6px; padding:10px;">{{ row.disabled_comment|linebreaksbr }}</div>
+                        <div style="margin-top:6px; font-size:12px; color:#92400e; white-space:pre-wrap; background:#fff7ed; border:1px solid #fb923c; border-radius:6px; padding:10px;">{{ row.feedback_comment_html|safe }}</div>
                         <div style="margin-top:8px; display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
                             <form method="post" action="{% url 'admin:quiz_quizlink_enable_question' quiz.pk row.quiz_question_id %}" style="display:inline-block;">
                                 {% csrf_token %}

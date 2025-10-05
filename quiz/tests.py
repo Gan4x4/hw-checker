@@ -7,14 +7,65 @@ from unittest.mock import patch
 from django.contrib.admin.sites import AdminSite
 from django.contrib.auth import get_user_model
 from django.contrib.messages.storage.fallback import FallbackStorage
-from django.test import RequestFactory, TestCase, override_settings
+from django.test import RequestFactory, SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
 from .admin import QuizLinkAdmin, StudentAdmin, TestAdmin
 from .management.commands.import_questions import import_quiz_from_json
 from .models import Attempt, Question, QuizLink, QuizQuestion, Student, Test, TestState
+from .templatetags.quiz_extras import wrap_long_lines
+from .utils import wrap_code_snippet, wrap_text, wrap_text_html, wrap_text_to_lines
 from .views import QuizQuestionFeedbackView, QuizSessionView
+
+
+class TextWrappingTests(SimpleTestCase):
+    def test_wrap_text_to_lines_splits_long_words(self):
+        lines = wrap_text_to_lines("x" * 17, width=5)
+
+        self.assertGreaterEqual(len(lines), 4)
+        self.assertTrue(all(len(line) <= 5 for line in lines if line))
+
+    def test_wrap_text_preserves_blank_lines(self):
+        text = "line one\n\nline two"
+        wrapped = wrap_text(text, width=5)
+
+        self.assertIn("\n\n", wrapped)
+
+    def test_wrap_long_lines_filter_outputs_br(self):
+        rendered = wrap_long_lines("abcdef", width=3)
+
+        self.assertIn("<br>", rendered)
+        self.assertEqual(rendered, wrap_text_html("abcdef", width=3))
+
+    def test_wrap_text_html_escapes_content(self):
+        html = wrap_text_html("<script>", width=2)
+
+        self.assertIn("&lt;script&gt;", html)
+
+    def test_wrap_code_snippet_breaks_long_lines(self):
+        long_line = "x" * 160
+        wrapped = wrap_code_snippet(long_line, width=150)
+
+        self.assertIn("\n", wrapped)
+        head, tail = wrapped.split("\n", 1)
+        self.assertEqual(len(head), 150)
+        self.assertEqual(tail, "x" * 10)
+
+    def test_wrap_code_snippet_preserves_short_lines(self):
+        snippet = "    print('hello world')"
+        wrapped = wrap_code_snippet(snippet, width=150)
+
+        self.assertEqual(wrapped, snippet)
+
+    def test_wrap_code_snippet_uses_space_boundary(self):
+        snippet = "    foo bar baz qux quux corge grault"
+        wrapped = wrap_code_snippet(snippet, width=20)
+
+        lines = wrapped.split("\n")
+        self.assertGreater(len(lines), 1)
+        self.assertTrue(all(line.startswith("    ") for line in lines if line))
+        self.assertNotIn("\n", lines[0])
 
 
 class QuizImportTests(TestCase):
@@ -77,6 +128,114 @@ class QuestionImageRenderTests(TestCase):
         texts = [text for draw in draw_calls for (_, text, _) in draw.calls if text]
         self.assertIn("Source: cell 5", texts)
 
+    def test_generate_image_places_question_first(self):
+        question = Question.objects.create(
+            question="What happens?",
+            code_snippet="print('hello')",
+            answers=["A", "B"],
+            correct_answer_index=0,
+        )
+
+        draw_calls = []
+
+        def fake_draw(image):
+            class DummyDraw:
+                def __init__(self):
+                    self.calls = []
+
+                def text(self, position, text, fill, font):
+                    self.calls.append((position, text, font))
+
+            draw = DummyDraw()
+            draw_calls.append(draw)
+            return draw
+
+        with self.settings(MEDIA_ROOT="ignored"), \
+            patch("quiz.models.Path.mkdir", return_value=None), \
+            patch("PIL.Image.Image.save", return_value=None), \
+            patch("quiz.models.ImageDraw.Draw", side_effect=fake_draw):
+            question.generate_image()
+
+        texts = [text for draw in draw_calls for (_, text, _) in draw.calls if text]
+        self.assertIn("What happens?", texts)
+        self.assertIn("print('hello')", texts)
+        self.assertLess(texts.index("What happens?"), texts.index("print('hello')"))
+
+    def test_generate_image_wraps_long_lines(self):
+        long_question = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."
+        question = Question.objects.create(
+            question=long_question,
+            answers=["Option"],
+            correct_answer_index=0,
+        )
+
+        draw_calls = []
+
+        def fake_draw(image):
+            class DummyDraw:
+                def __init__(self):
+                    self.calls = []
+
+                def text(self, position, text, fill, font):
+                    self.calls.append((position, text, font))
+
+            draw = DummyDraw()
+            draw_calls.append(draw)
+            return draw
+
+        with self.settings(MEDIA_ROOT="ignored", QUIZ_IMAGE_WRAP_WIDTH=20), \
+            patch("quiz.models.Path.mkdir", return_value=None), \
+            patch("PIL.Image.Image.save", return_value=None), \
+            patch("quiz.models.ImageDraw.Draw", side_effect=fake_draw):
+            question.generate_image()
+
+        texts = [text for draw in draw_calls for (_, text, _) in draw.calls if text]
+        question_lines = [text for text in texts if not text.startswith("Source:")]
+
+        self.assertGreater(len(question_lines), 1)
+        self.assertTrue(all(len(line) <= 20 for line in question_lines))
+
+    def test_generate_image_wraps_code_snippet_lines(self):
+        snippet = "print('hello world') " * 10
+        question = Question.objects.create(
+            question="Explain",
+            code_snippet=snippet,
+            answers=["A"],
+            correct_answer_index=0,
+        )
+
+        draw_calls = []
+
+        def fake_draw(image):
+            class DummyDraw:
+                def __init__(self):
+                    self.calls = []
+
+                def text(self, position, text, fill, font):
+                    self.calls.append((position, text, font))
+
+            draw = DummyDraw()
+            draw_calls.append(draw)
+            return draw
+
+        with self.settings(MEDIA_ROOT="ignored", QUIZ_IMAGE_WRAP_WIDTH=60), \
+            patch("quiz.models.Path.mkdir", return_value=None), \
+            patch("PIL.Image.Image.save", return_value=None), \
+            patch("quiz.models.ImageDraw.Draw", side_effect=fake_draw):
+            question.generate_image()
+
+        texts = [text for draw in draw_calls for (_, text, _) in draw.calls if text]
+        self.assertIn("-------------", texts)
+        divider_index = texts.index("-------------")
+        snippet_segments = []
+        for text in texts[divider_index + 1 :]:
+            if text.startswith("Source:"):
+                break
+            snippet_segments.append(text)
+
+        self.assertGreater(len(snippet_segments), 1)
+        self.assertTrue(all(len(segment) <= 60 for segment in snippet_segments))
+
 
 class QuizSessionResultsTests(TestCase):
     def setUp(self):
@@ -97,6 +256,9 @@ class QuizSessionResultsTests(TestCase):
             time_spent=8.2,
         )
 
+        self.question.code_snippet = "print('hello world')\nreturn 42"
+        self.question.save(update_fields=["code_snippet"])
+
         rows, score = QuizSessionView._build_results(self.quiz)
 
         self.assertEqual(len(rows), 1)
@@ -105,11 +267,15 @@ class QuizSessionResultsTests(TestCase):
         self.assertEqual(row["selected_answer"], "True")
         self.assertEqual(row["correct_answer"], "True")
         self.assertEqual(row["answers"], ["False", "True"])
+        self.assertEqual(len(row["answers_display"]), 2)
         self.assertEqual(row["time_spent"], 8.2)
         self.assertEqual(row["weight"], 2.5)
         self.assertIn("quiz_question_id", row)
         self.assertFalse(row["has_feedback"])
         self.assertEqual(row["feedback_comment"], "")
+        self.assertTrue(row["question_html"])  # wrapped for display
+        self.assertIn("code_snippet_wrapped", row)
+        self.assertEqual(row["code_snippet_wrapped"], "print('hello world')\nreturn 42")
         self.assertEqual(score["correct"], 1)
         self.assertEqual(score["total"], 1)
         self.assertEqual(score["attempted"], 1)
@@ -551,6 +717,54 @@ class QuizLinkAdminActionsTests(TestCase):
         row = rows[0]
         self.assertTrue(row["has_feedback"])
         self.assertEqual(row["disabled_comment"], "Confusing wording")
+
+    @override_settings(QUIZ_MAX_QUESTIONS=1)
+    def test_results_view_marks_excluded_questions(self):
+        first_quiz_question = self.quiz.quiz_questions.first()
+        second_question = Question.objects.create(
+            question="Extra?",
+            answers=["No", "Yes"],
+            correct_answer_index=1,
+        )
+        extra_quiz_question = QuizQuestion.objects.create(
+            quiz=self.quiz,
+            question=second_question,
+            order=2,
+        )
+
+        Attempt.objects.create(
+            quiz=self.quiz,
+            question=first_quiz_question.question,
+            selected_answer_index=1,
+        )
+
+        self.quiz.ensure_included_question_ids(force=True)
+
+        extra_quiz_question.order = 1
+        extra_quiz_question.save(update_fields=["order"])
+        first_quiz_question.order = 2
+        first_quiz_question.save(update_fields=["order"])
+
+        request = self.factory.get(f"/admin/quiz/quizlink/{self.quiz.pk}/results/")
+        request.user = self.superuser
+        response = self.admin.results_view(request, self.quiz.pk)
+
+        self.assertEqual(response.status_code, 200)
+        response.render()
+        rows = response.context_data["rows"]
+        self.assertEqual(len(rows), 2)
+        excluded_row = next(row for row in rows if row["quiz_question_id"] == extra_quiz_question.id)
+        included_row = next(row for row in rows if row["quiz_question_id"] == first_quiz_question.id)
+
+        self.assertFalse(included_row.get("is_excluded"))
+        self.assertTrue(excluded_row.get("is_excluded"))
+        self.assertEqual(excluded_row["status"], "excluded")
+
+        score = response.context_data["score"]
+        self.assertEqual(score["total"], 1)
+        self.assertEqual(score["correct"], 1)
+        self.assertEqual(score["attempted"], 1)
+        self.assertEqual(response.context_data["excluded_count"], 1)
 
     def test_download_hidden_questions_action_returns_file(self):
         quiz_question = self.quiz.quiz_questions.first()
