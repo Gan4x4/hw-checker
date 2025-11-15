@@ -1,6 +1,58 @@
 {% extends "admin/change_form.html" %}
 {% load i18n %}
 
+{% block extrahead %}
+    {{ block.super }}
+    <script>
+        document.addEventListener("DOMContentLoaded", function () {
+            const inlineTable = document.querySelector(".inline-group table");
+            if (!inlineTable) {
+                return;
+            }
+
+            const tbody = inlineTable.querySelector("tbody");
+            if (!tbody) {
+                return;
+            }
+
+            const collator = new Intl.Collator(undefined, {numeric: true, sensitivity: "base"});
+
+            const getRows = () => Array.from(tbody.querySelectorAll("tr")).filter(
+                (row) => !row.classList.contains("add-row")
+            );
+
+            const getCellValue = (row, index) => {
+                const cell = row.children[index];
+                if (!cell) {
+                    return "";
+                }
+                return (cell.textContent || "").trim().toLowerCase();
+            };
+
+            inlineTable.querySelectorAll("thead th").forEach((header, index) => {
+                const label = (header.textContent || "").trim();
+                if (!label || /delete/i.test(label)) {
+                    return;
+                }
+                header.style.cursor = "pointer";
+                header.addEventListener("click", function () {
+                    const current = header.dataset.sortDir === "asc" ? "desc" : "asc";
+                    header.dataset.sortDir = current;
+                    getRows()
+                        .sort((a, b) => {
+                            const result = collator.compare(
+                                getCellValue(a, index),
+                                getCellValue(b, index)
+                            );
+                            return current === "asc" ? result : -result;
+                        })
+                        .forEach((row) => tbody.insertBefore(row, tbody.querySelector(".add-row") || null));
+                });
+            });
+        });
+    </script>
+{% endblock %}
+
 {% block submit_buttons_top %}
     {% if has_quizzes %}
         <button type="submit" name="_export_links" value="1" formnovalidate class="button">{% trans "Export quiz links" %}</button>
