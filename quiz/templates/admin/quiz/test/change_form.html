@@ -47,4 +47,17 @@
             </fieldset>
         </div>
     {% endif %}
+    {% if show_import_form %}
+        <div class="inline-group" style="margin-top: 1rem;">
+            <fieldset class="module">
+                <h2>{% trans "Import question files" %}</h2>
+                <div class="form-row">
+                    <label for="id_json_files">{% trans "JSON files" %}</label>
+                    <input type="file" id="id_json_files" name="json_files" multiple>
+                </div>
+                <p class="help">{% trans "Upload one or more JSON files – the student is detected from the file name." %}</p>
+                <button type="submit" name="_import_questions" value="1" formnovalidate class="button">{% trans "Import files" %}</button>
+            </fieldset>
+        </div>
+    {% endif %}
 {% endblock %}

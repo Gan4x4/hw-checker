@@ -1,5 +1,6 @@
 import csv
 import json
+import re
 
 from datetime import timedelta
 from pathlib import Path
@@ -34,6 +35,81 @@ _thread_locals = local()
 
 def _current_request():
     return getattr(_thread_locals, "request", None)
+
+
+def _tokenize_value(value: str | None) -> set[str]:
+    if not value:
+        return set()
+
+    tokens: set[str] = set()
+
+    def _split_parts(text: str) -> None:
+        if not text:
+            return
+        cleaned = text.replace("-", " ").replace("_", " ")
+        for part in cleaned.split():
+            if part:
+                tokens.add(part)
+
+    for allow_unicode in (True, False):
+        slug = slugify(value, allow_unicode=allow_unicode)
+        if slug:
+            tokens.add(slug)
+            _split_parts(slug)
+
+    alnum = re.sub(r"[^\dA-Za-z\u0400-\u04FF]+", " ", value).strip().lower()
+    if alnum:
+        tokens.add(alnum.replace(" ", ""))
+        for part in alnum.split():
+            if part:
+                tokens.add(part)
+
+    return {token for token in tokens if len(token) > 1}
+
+
+def _student_slug_tokens(student):
+    tokens: set[str] = set()
+
+    if getattr(student, "name", None):
+        tokens.update(_tokenize_value(student.name))
+        for part in re.split(r"[\s,_-]+", student.name):
+            tokens.update(_tokenize_value(part))
+
+    email = getattr(student, "email", None)
+    if email:
+        local_part = email.split("@", 1)[0]
+        tokens.update(_tokenize_value(local_part))
+
+    return tokens
+
+
+def _infer_student_from_filename(filename, student_tokens):
+    stem = Path(filename or "").stem
+    filename_tokens = _tokenize_value(stem)
+    if not filename_tokens:
+        return None
+
+    matches: list[tuple[int, int, Student]] = []
+    for student, tokens in student_tokens:
+        overlap = filename_tokens.intersection(tokens)
+        if not overlap:
+            continue
+        best_length = max(len(token) for token in overlap)
+        matches.append((best_length, len(overlap), student))
+
+    if not matches:
+        return None
+
+    matches.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    top_best, top_count, top_student = matches[0]
+    tied = [
+        entry
+        for entry in matches
+        if entry[0] == top_best and entry[1] == top_count
+    ]
+    if len(tied) > 1:
+        return None
+    return top_student
 
 
 @admin.register(Student)
@@ -229,6 +305,7 @@ class QuizLinkAdmin(admin.ModelAdmin):
         "token",
         "title",
         "student",
+        "test_display",
         "created_at",
         "completed_at",
         "unhidden_question_count",
@@ -292,7 +369,7 @@ class QuizLinkAdmin(admin.ModelAdmin):
         queryset = (
             super()
             .get_queryset(request)
-            .select_related("student")
+            .select_related("student", "test")
             .annotate(
                 attempts_total=Count(
                     "attempts",
@@ -793,6 +870,10 @@ class QuizLinkAdmin(admin.ModelAdmin):
 
         return format_html("{}{}", view_button, reset_button)
 
+    @admin.display(description=_("Test"), ordering="test__title")
+    def test_display(self, obj):
+        return obj.test or "—"
+
 
 class TestQuizLinkInline(admin.TabularInline):
     model = QuizLink
@@ -912,6 +993,27 @@ class TestAdmin(admin.ModelAdmin):
                     )
                 return redirect("admin:quiz_test_change", obj.pk)
 
+        if request.method == "POST" and request.POST.get("_import_questions"):
+            if not obj:
+                self.message_user(
+                    request,
+                    _("Test not found."),
+                    level=messages.ERROR,
+                )
+                return redirect("admin:quiz_test_changelist")
+
+            uploads = request.FILES.getlist("json_files")
+            if not uploads:
+                self.message_user(
+                    request,
+                    _("Select at least one JSON file to import."),
+                    level=messages.ERROR,
+                )
+                return redirect("admin:quiz_test_change", obj.pk)
+
+            self._import_quizzes_into_test(request, obj, uploads)
+            return redirect("admin:quiz_test_change", obj.pk)
+
         extra_context = extra_context or {}
         if obj:
             obj.refresh_state()
@@ -924,6 +1026,7 @@ class TestAdmin(admin.ModelAdmin):
                     "remaining_seconds": obj.remaining_seconds(),
                     "has_quizzes": has_quizzes,
                     "can_reset": can_reset,
+                    "show_import_form": True,
                 }
             )
 
@@ -933,6 +1036,104 @@ class TestAdmin(admin.ModelAdmin):
             form_url=form_url,
             extra_context=extra_context,
         )
+
+    def render_change_form(self, request, context, add=False, change=False, form_url="", obj=None):
+        response = super().render_change_form(
+            request,
+            context,
+            add=add,
+            change=change,
+            form_url=form_url,
+            obj=obj,
+        )
+        if hasattr(response, "context_data") and response.context_data is not None:
+            response.context_data["has_file_field"] = True
+        return response
+
+    def _import_quizzes_into_test(self, request, test, uploads):
+        student_tokens = [
+            (student, _student_slug_tokens(student))
+            for student in Student.objects.all()
+        ]
+        existing_student_ids = set(
+            test.quizzes.exclude(student=None).values_list("student_id", flat=True)
+        )
+
+        imported_quizzes = 0
+        imported_questions = 0
+        default_title = test.title or _("Uploaded quiz")
+
+        for upload in uploads:
+            filename = upload.name or _("Uploaded file")
+            student = _infer_student_from_filename(filename, student_tokens)
+            if not student:
+                self.message_user(
+                    request,
+                    _("Skipped %(file)s: could not infer a student.")
+                    % {"file": filename},
+                    level=messages.WARNING,
+                )
+                continue
+
+            if student.pk in existing_student_ids:
+                self.message_user(
+                    request,
+                    _("Skipped %(file)s: %(student)s already has a quiz in this test.")
+                    % {"file": filename, "student": student},
+                    level=messages.INFO,
+                )
+                continue
+
+            try:
+                content = upload.read().decode("utf-8")
+            except UnicodeDecodeError:
+                self.message_user(
+                    request,
+                    _("Skipped %(file)s: file must be valid UTF-8 JSON.")
+                    % {"file": filename},
+                    level=messages.ERROR,
+                )
+                continue
+
+            default_name = Path(filename).stem or default_title
+            try:
+                quiz, created, json_student_name = import_quiz_from_json(
+                    content, default_name=default_name
+                )
+            except QuizImportError as exc:
+                self.message_user(
+                    request,
+                    _("Skipped %(file)s: %(error)s")
+                    % {"file": filename, "error": exc},
+                    level=messages.ERROR,
+                )
+                continue
+
+            quiz.student = student
+            quiz.test = test
+            quiz.save(update_fields=["student", "test"])
+            existing_student_ids.add(student.pk)
+            imported_quizzes += 1
+            imported_questions += created
+
+        if imported_quizzes:
+            self.message_user(
+                request,
+                _(
+                    "Imported %(quiz_count)d quiz(es) with %(question_count)d question(s)."
+                )
+                % {
+                    "quiz_count": imported_quizzes,
+                    "question_count": imported_questions,
+                },
+                level=messages.SUCCESS,
+            )
+        else:
+            self.message_user(
+                request,
+                _("No quizzes were imported."),
+                level=messages.WARNING,
+            )
 
 
 @admin.register(Attempt)

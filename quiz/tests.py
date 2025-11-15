@@ -7,6 +7,7 @@ from unittest.mock import patch
 from django.contrib.admin.sites import AdminSite
 from django.contrib.auth import get_user_model
 from django.contrib.messages.storage.fallback import FallbackStorage
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import RequestFactory, SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -508,6 +509,87 @@ class TestAdminStartTests(TestCase):
         self.assertIn(self.student.email, content)
         expected_url = f"http://testserver{reverse('quiz:session', kwargs={'token': self.quiz.token})}"
         self.assertIn(expected_url, content)
+
+class TestAdminImportQuestionsTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.superuser = User.objects.create_superuser(
+            username="importer",
+            email="importer@example.com",
+            password="password123",
+        )
+        self.client.force_login(self.superuser)
+        self.test = Test.objects.create(title="Exam", duration=timedelta(minutes=15))
+        self.student = Student.objects.create(name="Ivan Popov", email="popov@example.com")
+
+    def _build_upload(self, filename):
+        payload = json.dumps(
+            [
+                {
+                    "question": "What is 2 + 2?",
+                    "answers": ["3", "4"],
+                    "correct_answer_index": 1,
+                }
+            ]
+        )
+        return SimpleUploadedFile(
+            filename,
+            payload.encode("utf-8"),
+            content_type="application/json",
+        )
+
+    def test_import_assigns_quiz_to_student(self):
+        upload = self._build_upload("Popov_questions.json")
+        url = reverse("admin:quiz_test_change", args=[self.test.pk])
+
+        response = self.client.post(
+            url,
+            {"_import_questions": "1", "json_files": upload},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        quiz = QuizLink.objects.get(test=self.test)
+        self.assertEqual(quiz.student, self.student)
+        self.assertEqual(quiz.quiz_questions.count(), 1)
+
+    def test_import_skips_unknown_student(self):
+        upload = self._build_upload("unknown.json")
+        url = reverse("admin:quiz_test_change", args=[self.test.pk])
+
+        response = self.client.post(
+            url,
+            {"_import_questions": "1", "json_files": upload},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(QuizLink.objects.filter(test=self.test).exists())
+
+    def test_import_skips_existing_student_quiz(self):
+        question = Question.objects.create(
+            question="Existing?",
+            answers=["No", "Yes"],
+            correct_answer_index=1,
+        )
+        quiz = QuizLink.objects.create(title="Existing", student=self.student, test=self.test)
+        QuizQuestion.objects.create(quiz=quiz, question=question, order=1)
+
+        upload = self._build_upload("Popov_questions.json")
+        url = reverse("admin:quiz_test_change", args=[self.test.pk])
+
+        response = self.client.post(
+            url,
+            {"_import_questions": "1", "json_files": upload},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            QuizLink.objects.filter(test=self.test, student=self.student).count(),
+            1,
+        )
+
 
 class QuizLinkResetTests(TestCase):
     def setUp(self):
