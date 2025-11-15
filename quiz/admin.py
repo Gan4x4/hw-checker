@@ -903,7 +903,16 @@ class TestAdmin(admin.ModelAdmin):
 
     def get_queryset(self, request):
         queryset = super().get_queryset(request)
-        return queryset.prefetch_related("quizzes")
+        return queryset.prefetch_related(
+            Prefetch(
+                "quizzes",
+                queryset=QuizLink.objects.select_related("student").order_by(
+                    "student__name",
+                    "student__email",
+                    "pk",
+                ),
+            )
+        )
 
     @admin.display(description=_("State"), ordering="state")
     def state_display(self, obj):
