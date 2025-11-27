@@ -6,6 +6,11 @@
 {% block content %}
 <div class="quiz-results" style="max-width: 960px;">
     <h1>{% trans "Quiz results" %}: {{ quiz.title|default:quiz.token }}</h1>
+    {% if quiz.student %}
+        <p style="margin: 4px 0 12px; font-weight: 600; color: #0f172a;">
+            {% trans "Student" %}: {{ quiz.student }}
+        </p>
+    {% endif %}
     <p class="muted">
         {% if score.total %}
             {% blocktrans with correct=score.correct total=score.total attempted=score.attempted percent=score.percent|floatformat:0 %}

@@ -54,34 +54,46 @@
 {% endblock %}
 
 {% block submit_buttons_top %}
-    {% if has_quizzes %}
-        <button type="submit" name="_export_links" value="1" formnovalidate class="button">{% trans "Export quiz links" %}</button>
+    {% if not view_only %}
+        {% if has_quizzes %}
+            <button type="submit" name="_export_links" value="1" formnovalidate class="button">{% trans "Export quiz links" %}</button>
+        {% endif %}
+        {% if can_reset %}
+            <button type="submit" name="_reset_test" value="1" formnovalidate class="button">{% trans "Reset test" %}</button>
+        {% endif %}
+        {% if can_start %}
+            <button type="submit" name="_start_test" value="1" formnovalidate class="button default">{% trans "Start test" %}</button>
+        {% endif %}
+        {{ block.super }}
     {% endif %}
-    {% if can_reset %}
-        <button type="submit" name="_reset_test" value="1" formnovalidate class="button">{% trans "Reset test" %}</button>
-    {% endif %}
-    {% if can_start %}
-        <button type="submit" name="_start_test" value="1" formnovalidate class="button default">{% trans "Start test" %}</button>
-    {% endif %}
-    {{ block.super }}
 {% endblock %}
 
 {% block submit_buttons_bottom %}
-    {% if has_quizzes %}
-        <button type="submit" name="_export_links" value="1" formnovalidate class="button">{% trans "Export quiz links" %}</button>
+    {% if not view_only %}
+        {% if has_quizzes %}
+            <button type="submit" name="_export_links" value="1" formnovalidate class="button">{% trans "Export quiz links" %}</button>
+        {% endif %}
+        {% if can_reset %}
+            <button type="submit" name="_reset_test" value="1" formnovalidate class="button">{% trans "Reset test" %}</button>
+        {% endif %}
+        {% if can_start %}
+            <button type="submit" name="_start_test" value="1" formnovalidate class="button default">{% trans "Start test" %}</button>
+        {% endif %}
+        {{ block.super }}
     {% endif %}
-    {% if can_reset %}
-        <button type="submit" name="_reset_test" value="1" formnovalidate class="button">{% trans "Reset test" %}</button>
-    {% endif %}
-    {% if can_start %}
-        <button type="submit" name="_start_test" value="1" formnovalidate class="button default">{% trans "Start test" %}</button>
-    {% endif %}
-    {{ block.super }}
 {% endblock %}
 
 {% block after_field_sets %}
     {{ block.super }}
-    {% if not has_quizzes %}
+    {% if original %}
+        <div class="inline-group" style="margin-top: 1rem;">
+            <fieldset class="module">
+                <h2>{% trans "Quizzes" %}</h2>
+                <p class="help">{% trans "This table mirrors the Quiz list filtered to this test." %}</p>
+                {% include "admin/quiz/quizlink/quiz_list_table.html" with quizzes=quizzes %}
+            </fieldset>
+        </div>
+    {% elif not has_quizzes %}
         <div class="inline-group" style="margin-top: 1rem;">
             <fieldset class="module">
                 <h2>{% trans "No quizzes assigned" %}</h2>
@@ -99,7 +111,7 @@
             </fieldset>
         </div>
     {% endif %}
-    {% if show_import_form %}
+    {% if show_import_form and not view_only %}
         <div class="inline-group" style="margin-top: 1rem;">
             <fieldset class="module">
                 <h2>{% trans "Import question files" %}</h2>

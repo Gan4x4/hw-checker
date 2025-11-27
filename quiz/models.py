@@ -202,6 +202,7 @@ class Question(models.Model):
 class QuizLink(models.Model):
     token = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     title = models.CharField(max_length=255, blank=True)
+    original_filename = models.CharField(max_length=500, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     test = models.ForeignKey(
@@ -238,13 +239,15 @@ class QuizLink(models.Model):
             return queryset[:limit]
         return queryset
 
-    def ensure_included_question_ids(self, *, force: bool = False) -> None:
+    def ensure_included_question_ids(self, *, force: bool = False, persist: bool = False) -> list[int]:
         if self.included_question_ids and not force:
-            return
+            return self.included_question_ids
         snapshot = self._compute_included_question_ids()
         if snapshot != self.included_question_ids:
             self.included_question_ids = snapshot
-            self.save(update_fields=["included_question_ids"])
+            if persist:
+                self.save(update_fields=["included_question_ids"])
+        return self.included_question_ids
 
     def _compute_included_question_ids(self) -> list[int]:
         queryset = (

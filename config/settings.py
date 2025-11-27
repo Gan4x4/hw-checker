@@ -19,6 +19,17 @@ import dj_database_url
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def _int_setting(name: str, default: int, *, min_value: int | None = None) -> int:
+    raw = os.environ.get(name, default)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    if min_value is not None and value < min_value:
+        return default
+    return value
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
@@ -127,23 +138,11 @@ MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 # Quiz configuration
-raw_quiz_max_questions = os.environ.get("QUIZ_MAX_QUESTIONS", "7")
-try:
-    QUIZ_MAX_QUESTIONS = int(raw_quiz_max_questions)
-except (TypeError, ValueError):
-    QUIZ_MAX_QUESTIONS = 7
-
-raw_quiz_image_wrap_width = os.environ.get("QUIZ_IMAGE_WRAP_WIDTH", "79") #PEP8
-try:
-    QUIZ_IMAGE_WRAP_WIDTH = int(raw_quiz_image_wrap_width)
-except (TypeError, ValueError):
-    QUIZ_IMAGE_WRAP_WIDTH = 79
-
-raw_quiz_image_max_pixel_width = os.environ.get("QUIZ_IMAGE_MAX_PIXEL_WIDTH", "900")
-try:
-    QUIZ_IMAGE_MAX_PIXEL_WIDTH = int(raw_quiz_image_max_pixel_width)
-except (TypeError, ValueError):
-    QUIZ_IMAGE_MAX_PIXEL_WIDTH = 900
+QUIZ_MAX_QUESTIONS = _int_setting("QUIZ_MAX_QUESTIONS", 7, min_value=1)
+QUIZ_IMAGE_WRAP_WIDTH = _int_setting("QUIZ_IMAGE_WRAP_WIDTH", 79, min_value=1)  # PEP8
+QUIZ_IMAGE_MAX_PIXEL_WIDTH = _int_setting("QUIZ_IMAGE_MAX_PIXEL_WIDTH", 900, min_value=1)
+QUIZ_QUESTION_TIMEOUT = _int_setting("QUIZ_QUESTION_TIMEOUT", 60, min_value=1)
+QUIZ_TITLE_MAX_LENGTH = _int_setting("QUIZ_TITLE_MAX_LENGTH", 30, min_value=1)
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

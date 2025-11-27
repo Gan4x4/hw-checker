@@ -1,0 +1,39 @@
+{% load i18n %}
+<div class="results">
+    <table id="result_list">
+        <thead>
+            <tr>
+                <th scope="col">{% trans "Token" %}</th>
+                <th scope="col">{% trans "Title" %}</th>
+                <th scope="col">{% trans "Student" %}</th>
+                <th scope="col">{% trans "Test" %}</th>
+                <th scope="col">{% trans "Created at" %}</th>
+                <th scope="col">{% trans "Completed at" %}</th>
+                <th scope="col">{% trans "Unhidden questions" %}</th>
+                <th scope="col">{% trans "Score" %}</th>
+                <th scope="col">{% trans "Actions" %}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for quiz in quizzes %}
+                <tr class="{% cycle 'row1' 'row2' %}">
+                    <th scope="row">{{ quiz.token }}</th>
+                    <td>
+                        <a href="{% url 'admin:quiz_quizlink_change' quiz.pk %}">{{ quiz.title|default:quiz.token }}</a>
+                    </td>
+                    <td>{{ quiz.student|default:"—" }}</td>
+                    <td>{{ quiz.test|default:"—" }}</td>
+                    <td>{{ quiz.created_at }}</td>
+                    <td>{{ quiz.completed_at|default:"—" }}</td>
+                    <td>{{ quiz.unhidden_question_count }}</td>
+                    <td>{{ quiz.score_display }}</td>
+                    <td>{{ quiz.action_buttons|default_if_none:""|safe }}</td>
+                </tr>
+            {% empty %}
+                <tr class="row1">
+                    <td colspan="9" style="text-align:center;">{% trans "No quizzes found." %}</td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>

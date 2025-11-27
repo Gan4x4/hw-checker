@@ -22,7 +22,7 @@ class HomeView(TemplateView):
 
 class QuizSessionView(View):
     template_name = "quiz/question.html"
-    timeout_seconds = 30
+    timeout_seconds = getattr(settings, "QUIZ_QUESTION_TIMEOUT", 30)
 
     def get(self, request, token, *args, **kwargs):
         quiz = self._get_quiz(token)
@@ -141,7 +141,7 @@ class QuizSessionView(View):
 
         if "start_quiz" in request.POST:
             self._clear_all_timers(request, quiz)
-            quiz.ensure_included_question_ids()
+            quiz.ensure_included_question_ids(force=True, persist=True)
             request.session[start_key] = True
             request.session.modified = True
             return redirect("quiz:session", token=quiz.token)

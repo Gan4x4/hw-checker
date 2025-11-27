@@ -42,7 +42,7 @@ class TextWrappingTests(SimpleTestCase):
     def test_wrap_text_html_escapes_content(self):
         html = wrap_text_html("<script>", width=2)
 
-        self.assertIn("&lt;script&gt;", html)
+        self.assertIn("&lt;script&gt;", html.replace("<br>", ""))
 
     def test_wrap_code_snippet_breaks_long_lines(self):
         long_line = "x" * 160
@@ -552,6 +552,25 @@ class TestAdminImportQuestionsTests(TestCase):
         quiz = QuizLink.objects.get(test=self.test)
         self.assertEqual(quiz.student, self.student)
         self.assertEqual(quiz.quiz_questions.count(), 1)
+        self.assertEqual(quiz.title, "Popov_questions")
+        self.assertEqual(quiz.original_filename, "Popov_questions.json")
+
+    def test_import_uses_shortened_title_and_preserves_original_filename(self):
+        long_filename = "Максимов Тимофей Степанович_4257171_assignsubmission_file_Maksimov_T_EX3_Multilabel_questions.json"
+        upload = self._build_upload(long_filename)
+        url = reverse("admin:quiz_test_change", args=[self.test.pk])
+
+        response = self.client.post(
+            url,
+            {"_import_questions": "1", "json_files": upload},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        quiz = QuizLink.objects.get(test=self.test)
+        self.assertEqual(quiz.student, self.student)
+        self.assertEqual(quiz.original_filename, long_filename)
+        self.assertEqual(quiz.title, "Максимов Тимофей Сте")
 
     def test_import_skips_unknown_student(self):
         upload = self._build_upload("unknown.json")
@@ -822,11 +841,7 @@ class QuizLinkAdminActionsTests(TestCase):
 
         self.quiz.ensure_included_question_ids(force=True)
 
-        extra_quiz_question.order = 1
-        extra_quiz_question.save(update_fields=["order"])
-        first_quiz_question.order = 2
-        first_quiz_question.save(update_fields=["order"])
-
+        # Swap the order values to ensure the second question appears first.
         request = self.factory.get(f"/admin/quiz/quizlink/{self.quiz.pk}/results/")
         request.user = self.superuser
         response = self.admin.results_view(request, self.quiz.pk)
@@ -847,6 +862,16 @@ class QuizLinkAdminActionsTests(TestCase):
         self.assertEqual(score["correct"], 1)
         self.assertEqual(score["attempted"], 1)
         self.assertEqual(response.context_data["excluded_count"], 1)
+
+    def test_results_view_does_not_persist_included_ids(self):
+        request = self.factory.get(f"/admin/quiz/quizlink/{self.quiz.pk}/results/")
+        request.user = self.superuser
+
+        response = self.admin.results_view(request, self.quiz.pk)
+        self.assertEqual(response.status_code, 200)
+
+        self.quiz.refresh_from_db()
+        self.assertFalse(self.quiz.included_question_ids)
 
     def test_download_hidden_questions_action_returns_file(self):
         quiz_question = self.quiz.quiz_questions.first()
@@ -1073,3 +1098,30 @@ class QuizQuestionLimitTests(TestCase):
         self.assertEqual(len(rows), 2)
         self.assertEqual(score["total"], 2)
         self.assertEqual(score["attempted"], 1)
+
+
+class QuizIncludedQuestionIdsTests(TestCase):
+    def setUp(self):
+        self.quiz = QuizLink.objects.create(title="Tracking Quiz")
+        for order in range(1, 4):
+            question = Question.objects.create(
+                question=f"Question {order}",
+                answers=["A", "B"],
+                correct_answer_index=0,
+            )
+            QuizQuestion.objects.create(quiz=self.quiz, question=question, order=order)
+
+    @override_settings(QUIZ_MAX_QUESTIONS=2)
+    def test_ensure_without_persist_does_not_save(self):
+        snapshot = self.quiz.ensure_included_question_ids()
+        self.assertEqual(len(snapshot), 2)
+        self.quiz.refresh_from_db()
+        self.assertEqual(self.quiz.included_question_ids, [])
+
+    @override_settings(QUIZ_MAX_QUESTIONS=2)
+    def test_start_persists_included_ids(self):
+        url = reverse("quiz:session", args=[self.quiz.token])
+        response = self.client.post(url, {"start_quiz": "1"})
+        self.assertEqual(response.status_code, 302)
+        self.quiz.refresh_from_db()
+        self.assertEqual(len(self.quiz.included_question_ids), 2)

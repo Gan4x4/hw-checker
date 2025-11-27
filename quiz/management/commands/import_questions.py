@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
@@ -131,8 +132,37 @@ def _fallback_name(raw: str | None) -> str:
     return stem or "Untitled quiz"
 
 
+def _title_max_length(default: int = 20) -> int:
+    """Return the configured maximum title length or the provided default."""
+
+    value = getattr(settings, "QUIZ_TITLE_MAX_LENGTH", default)
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _short_title_from_filename(filename: str | None, *, max_length: int | None = None) -> str:
+    """Return a trimmed stem of ``filename`` capped to ``max_length`` characters."""
+
+    if not filename:
+        return _fallback_name(filename)
+
+    limit = max_length if max_length is not None else _title_max_length()
+    stem = Path(filename).stem or filename
+    title = stem.strip() or _fallback_name(filename)
+    if len(title) > limit:
+        return title[:limit]
+    return title
+
+
 def import_quiz_from_json(
-    content: str, *, default_name: str, replace: bool = False
+    content: str,
+    *,
+    default_name: str,
+    replace: bool = False,
+    source_filename: str | None = None,
 ) -> Tuple[QuizLink, int, str | None]:
     try:
         payload = json.loads(content)
@@ -140,7 +170,8 @@ def import_quiz_from_json(
         raise QuizImportError(f"Invalid JSON: {exc}") from exc
 
     quiz_name, student_name, questions = _normalize_payload(payload)
-    quiz_title = quiz_name or _fallback_name(default_name)
+    quiz_title = quiz_name or _short_title_from_filename(source_filename or default_name)
+    original_filename = source_filename or ""
 
     with transaction.atomic():
         if replace:
@@ -152,7 +183,10 @@ def import_quiz_from_json(
         for question in questions:
             question.save()
 
-        quiz = QuizLink.objects.create(title=quiz_title)
+        quiz = QuizLink.objects.create(
+            title=quiz_title,
+            original_filename=original_filename,
+        )
         for order, question in enumerate(questions, start=1):
             QuizQuestion.objects.create(quiz=quiz, question=question, order=order)
 
@@ -162,7 +196,12 @@ def import_quiz_from_json(
 def import_quiz_from_path(
     path: Path, *, replace: bool = False
 ) -> Tuple[QuizLink, int, str | None]:
-    return import_quiz_from_json(path.read_text(encoding="utf-8"), default_name=path.stem, replace=replace)
+    return import_quiz_from_json(
+        path.read_text(encoding="utf-8"),
+        default_name=path.name,
+        replace=replace,
+        source_filename=path.name,
+    )
 
 
 class Command(BaseCommand):

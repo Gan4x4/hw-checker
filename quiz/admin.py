@@ -20,7 +20,7 @@ from django.utils.text import slugify
 from django.utils.translation import gettext_lazy as _
 
 from .forms import QuizImportForm, StudentImportForm, TestCreationForm
-from .management.commands.import_questions import QuizImportError, import_quiz_from_json
+from .management.commands.import_questions import QuizImportError, import_quiz_from_json, _short_title_from_filename
 from .models import Attempt, Question, QuizLink, QuizQuestion, Student, Test, TestState
 from .utils import (
     import_students_from_content,
@@ -312,8 +312,9 @@ class QuizLinkAdmin(admin.ModelAdmin):
         "score_display",
         "admin_actions",
     )
+    list_filter = ("test", "student")
     inlines = [QuizQuestionInline]
-    readonly_fields = ("token", "created_at", "completed_at")
+    readonly_fields = ("token", "original_filename", "created_at", "completed_at")
     change_list_template = "admin/quiz/quizlink/change_list.html"
     actions = ["download_hidden_questions_action", "make_test_action"]
 
@@ -492,18 +493,32 @@ class QuizLinkAdmin(admin.ModelAdmin):
             else:
                 try:
                     quiz, created, json_student_name = import_quiz_from_json(
-                        content, default_name=default_name
+                        content,
+                        default_name=default_name,
+                        source_filename=upload.name,
                     )
                 except QuizImportError as exc:
                     form.add_error("json_file", str(exc))
                 else:
+                    updates = []
+                    short_title = _short_title_from_filename(upload.name)
+                    if quiz.title != short_title:
+                        quiz.title = short_title
+                        updates.append("title")
+                    if quiz.original_filename != (upload.name or ""):
+                        quiz.original_filename = upload.name or ""
+                        updates.append("original_filename")
+
                     selected_student = form.cleaned_data.get("student")
                     student = selected_student
                     if student is None and json_student_name:
                         student = Student.objects.filter(name__icontains=json_student_name).first()
                     if student:
                         quiz.student = student
-                        quiz.save(update_fields=["student"])
+                        updates.append("student")
+
+                    if updates:
+                        quiz.save(update_fields=updates)
                     messages.success(
                         request,
                         _(
@@ -576,7 +591,7 @@ class QuizLinkAdmin(admin.ModelAdmin):
         attempted = 0
         total_active = 0
 
-        for quiz_question in quiz_questions:
+        for position, quiz_question in enumerate(quiz_questions, start=1):
             question = quiz_question.question
             attempt = attempts.get(question.id)
             selected_answer = None
@@ -592,9 +607,13 @@ class QuizLinkAdmin(admin.ModelAdmin):
             has_feedback = bool(comment and not is_disabled)
 
             is_excluded = False
-            if not is_disabled and included_ids and quiz_question.id not in included_ids:
-                is_excluded = True
-                status = "excluded"
+            if not is_disabled:
+                if included_ids and quiz_question.id not in included_ids:
+                    is_excluded = True
+                    status = "excluded"
+                elif not included_ids and limit is not None and position > limit:
+                    is_excluded = True
+                    status = "excluded"
 
             if is_disabled:
                 status = "disabled"
@@ -890,23 +909,36 @@ class TestQuizLinkInline(admin.TabularInline):
 @admin.register(Test)
 class TestAdmin(admin.ModelAdmin):
     list_display = (
-        "title",
+        "title_link",
         "state_display",
         "duration",
         "started_at",
         "finished_at",
         "quiz_count",
+        "edit_link",
     )
+    list_display_links = None
     readonly_fields = ("state", "started_at", "finished_at", "created_at")
-    inlines = [TestQuizLinkInline]
+    inlines = []
     change_form_template = "admin/quiz/test/change_form.html"
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                "<int:object_id>/view/",
+                self.admin_site.admin_view(self.view_view),
+                name="quiz_test_view",
+            ),
+        ]
+        return custom_urls + urls
 
     def get_queryset(self, request):
         queryset = super().get_queryset(request)
         return queryset.prefetch_related(
             Prefetch(
                 "quizzes",
-                queryset=QuizLink.objects.select_related("student").order_by(
+                queryset=QuizLink.objects.select_related("student", "test").order_by(
                     "student__name",
                     "student__email",
                     "pk",
@@ -922,6 +954,16 @@ class TestAdmin(admin.ModelAdmin):
     @admin.display(description=_("Quizzes"))
     def quiz_count(self, obj):
         return obj.quizzes.count()
+
+    @admin.display(description=_("Title"), ordering="title")
+    def title_link(self, obj):
+        view_url = reverse("admin:quiz_test_view", args=[obj.pk])
+        return format_html('<a href="{}">{}</a>', view_url, obj.title or _("(Untitled)"))
+
+    @admin.display(description=_("Edit"), ordering=False)
+    def edit_link(self, obj):
+        edit_url = reverse("admin:quiz_test_change", args=[obj.pk])
+        return format_html('<a class="button" href="{}">{}</a>', edit_url, _("Edit"))
 
     def changeform_view(self, request, object_id=None, form_url="", extra_context=None):
         obj = self.get_object(request, object_id) if object_id else None
@@ -1026,7 +1068,24 @@ class TestAdmin(admin.ModelAdmin):
         extra_context = extra_context or {}
         if obj:
             obj.refresh_state()
-            has_quizzes = obj.quizzes.exists()
+            quizzes = list(
+                obj.quizzes.select_related("student", "test").order_by(
+                    "student__name",
+                    "student__email",
+                    "pk",
+                )
+            )
+            quiz_admin = self.admin_site._registry.get(QuizLink)
+            if quiz_admin:
+                _thread_locals.request = request
+                try:
+                    for quiz in quizzes:
+                        quiz.unhidden_question_count = quiz_admin.unhidden_question_count(quiz)
+                        quiz.score_display = quiz_admin.score_display(quiz)
+                        quiz.action_buttons = quiz_admin.admin_actions(quiz)
+                finally:
+                    _thread_locals.request = None
+            has_quizzes = bool(quizzes)
             can_reset = obj.can_reset()
             extra_context.update(
                 {
@@ -1036,12 +1095,36 @@ class TestAdmin(admin.ModelAdmin):
                     "has_quizzes": has_quizzes,
                     "can_reset": can_reset,
                     "show_import_form": True,
+                    "quizzes": quizzes,
+                    "view_only": extra_context.get("view_only", False) if extra_context else False,
                 }
             )
 
         return super().changeform_view(
             request,
             object_id=object_id,
+            form_url=form_url,
+            extra_context=extra_context,
+        )
+
+    def view_view(self, request, object_id, form_url="", extra_context=None):
+        if request.method != "GET":
+            return HttpResponseBadRequest(_("View is read-only."))
+
+        extra_context = extra_context or {}
+        extra_context.update(
+            {
+                "view_only": True,
+                "show_save": False,
+                "show_save_as_new": False,
+                "show_save_and_add_another": False,
+                "show_save_and_continue": False,
+                "show_delete": False,
+            }
+        )
+        return self.changeform_view(
+            request,
+            object_id=str(object_id),
             form_url=form_url,
             extra_context=extra_context,
         )
@@ -1104,10 +1187,12 @@ class TestAdmin(admin.ModelAdmin):
                 )
                 continue
 
-            default_name = Path(filename).stem or default_title
+            default_name = filename
             try:
                 quiz, created, json_student_name = import_quiz_from_json(
-                    content, default_name=default_name
+                    content,
+                    default_name=default_name,
+                    source_filename=filename,
                 )
             except QuizImportError as exc:
                 self.message_user(
@@ -1118,9 +1203,20 @@ class TestAdmin(admin.ModelAdmin):
                 )
                 continue
 
+            updates = []
+            short_title = _short_title_from_filename(filename)
+            if quiz.title != short_title:
+                quiz.title = short_title
+                updates.append("title")
+            if quiz.original_filename != (filename or ""):
+                quiz.original_filename = filename or ""
+                updates.append("original_filename")
+
             quiz.student = student
             quiz.test = test
-            quiz.save(update_fields=["student", "test"])
+            updates.extend(["student", "test"])
+            if updates:
+                quiz.save(update_fields=updates)
             existing_student_ids.add(student.pk)
             imported_quizzes += 1
             imported_questions += created
