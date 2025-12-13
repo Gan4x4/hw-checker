@@ -60,7 +60,7 @@
         </thead>
         <tbody>
         {% for row in rows %}
-            <tr style="background:#ffffff;{% if row.is_disabled %} background:#f3f4f6;{% elif row.is_excluded %} background:#f8fafc;{% elif row.has_feedback %} background:#fff7ed;{% elif row.status == 'correct' %} background:#e6f9ed;{% elif row.status == 'incorrect' %} background:#ffe8e8;{% endif %}">
+            <tr id="question-{{ row.quiz_question_id }}" style="background:#ffffff;{% if row.is_disabled %} background:#f3f4f6;{% elif row.is_excluded %} background:#f8fafc;{% elif row.has_feedback %} background:#fff7ed;{% elif row.status == 'correct' %} background:#e6f9ed;{% elif row.status == 'incorrect' %} background:#ffe8e8;{% endif %}">
                 <td style="padding:12px; vertical-align:top; border-bottom:1px solid #f1f5f9; color:#0f172a;">{{ row.order }}</td>
                 <td style="padding:12px; vertical-align:top; border-bottom:1px solid #f1f5f9;">
                     <div style="font-weight:600; color:#0f172a;">{{ row.question_html|safe }}</div>

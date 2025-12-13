@@ -452,6 +452,13 @@ class QuizQuestion(models.Model):
         return f"{self.quiz} - {self.question} ({self.order})"
 
 
+class QuizQuestionFeedback(QuizQuestion):
+    class Meta:
+        proxy = True
+        verbose_name = _("Feedback")
+        verbose_name_plural = _("Feedback")
+
+
 class Attempt(models.Model):
     quiz = models.ForeignKey(QuizLink, related_name="attempts", on_delete=models.CASCADE)
     question = models.ForeignKey(Question, on_delete=models.CASCADE)

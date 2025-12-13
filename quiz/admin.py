@@ -1,6 +1,7 @@
 import csv
 import json
 import re
+from collections import defaultdict
 
 from datetime import timedelta
 from pathlib import Path
@@ -21,7 +22,7 @@ from django.utils.translation import gettext_lazy as _
 
 from .forms import QuizImportForm, StudentImportForm, TestCreationForm
 from .management.commands.import_questions import QuizImportError, import_quiz_from_json, _short_title_from_filename
-from .models import Attempt, Question, QuizLink, QuizQuestion, Student, Test, TestState
+from .models import Attempt, Question, QuizLink, QuizQuestion, QuizQuestionFeedback, Student, Test, TestState
 from .utils import (
     import_students_from_content,
     sync_students_from_csv,
@@ -557,9 +558,25 @@ class QuizLinkAdmin(admin.ModelAdmin):
         if not quiz:
             return HttpResponseBadRequest(_("Quiz not found."))
 
+        focus_question_id = request.GET.get("focus")
+        try:
+            focus_question_id_int = int(focus_question_id) if focus_question_id else None
+        except (TypeError, ValueError):
+            focus_question_id_int = None
+
         quiz_questions = list(
             quiz.quiz_questions.select_related("question").order_by("order")
         )
+        if focus_question_id_int is not None:
+            quiz_questions = [
+                quiz_question
+                for quiz_question in quiz_questions
+                if quiz_question.id == focus_question_id_int
+            ]
+            if not quiz_questions:
+                messages.error(request, _("Feedback question not found for this quiz."))
+                return redirect("admin:quiz_quizlink_results", quiz_id)
+
         attempts = {
             attempt.question_id: attempt
             for attempt in quiz.attempts.select_related("question").order_by("created_at")
@@ -892,6 +909,133 @@ class QuizLinkAdmin(admin.ModelAdmin):
     @admin.display(description=_("Test"), ordering="test__title")
     def test_display(self, obj):
         return obj.test or "—"
+
+
+@admin.register(QuizQuestionFeedback)
+class QuizQuestionFeedbackAdmin(admin.ModelAdmin):
+    change_list_template = "admin/quiz/quizlink/change_list.html"
+    actions = ["export_feedback_action"]
+    list_display = (
+        "question_summary",
+        "quiz_display",
+        "student",
+        "test_display",
+        "completed_at",
+        "feedback_preview",
+    )
+    list_select_related = ("quiz__student", "quiz__test", "question")
+    search_fields = (
+        "question__question",
+        "quiz__title",
+        "quiz__student__name",
+        "quiz__student__email",
+        "disabled_comment",
+    )
+    ordering = ("-quiz__completed_at", "-quiz__created_at", "order")
+    readonly_fields = ("quiz", "question", "order")
+    fields = ("quiz", "question", "order", "disabled_comment")
+
+    def get_queryset(self, request):
+        queryset = super().get_queryset(request)
+        return queryset.exclude(disabled_comment="")
+
+    @admin.display(description=_("Question"))
+    def question_summary(self, obj):
+        text = obj.question.question or ""
+        if len(text) > 80:
+            return f"{text[:77]}..."
+        return text
+
+    @admin.display(description=_("Quiz"), ordering="quiz__title")
+    def quiz_display(self, obj):
+        return obj.quiz.title or obj.quiz.token
+
+    @admin.display(description=_("Student"), ordering="quiz__student__name")
+    def student(self, obj):
+        return obj.quiz.student
+
+    @admin.display(description=_("Test"), ordering="quiz__test__title")
+    def test_display(self, obj):
+        return obj.quiz.test or "—"
+
+    @admin.display(description=_("Completed"), ordering="quiz__completed_at")
+    def completed_at(self, obj):
+        return obj.quiz.completed_at or "—"
+
+    @admin.display(description=_("Feedback"))
+    def feedback_preview(self, obj):
+        comment = obj.disabled_comment or ""
+        if len(comment) > 80:
+            return f"{comment[:77]}..."
+        return comment or "—"
+
+    def has_add_permission(self, request, obj=None):  # pragma: no cover - admin guard
+        return False
+
+    def has_delete_permission(self, request, obj=None):  # pragma: no cover - admin guard
+        return False
+
+    def change_view(self, request, object_id, form_url="", extra_context=None):
+        feedback = self.get_object(request, object_id)
+        if feedback:
+            results_url = reverse("admin:quiz_quizlink_results", args=[feedback.quiz_id])
+            return HttpResponseRedirect(f"{results_url}?focus={feedback.pk}#question-{feedback.pk}")
+        return super().change_view(request, object_id, form_url, extra_context)
+
+    def export_feedback_action(self, request, queryset):
+        feedback_map: dict[int, list[QuizQuestionFeedback]] = defaultdict(list)
+        for feedback in queryset.select_related("quiz__student"):
+            feedback_map[feedback.quiz_id].append(feedback)
+
+        if not feedback_map:
+            self.message_user(request, _("No feedback selected."), level=messages.INFO)
+            return None
+
+        payload = []
+        for quiz_id, items in feedback_map.items():
+            quiz = items[0].quiz
+            payload.append(self._build_feedback_payload(quiz, items))
+
+        filename = "feedback-questions"
+        if len(payload) == 1:
+            quiz_name = payload[0].get("name") or ""
+            filename = slugify(quiz_name) or filename
+
+        json_content = json.dumps(payload, ensure_ascii=False, indent=2)
+        response = HttpResponse(json_content, content_type="application/json")
+        response["Content-Disposition"] = f'attachment; filename=\"{filename}.json\"'
+        return response
+
+    export_feedback_action.short_description = _("Export feedback as JSON")
+
+    def _build_feedback_payload(self, quiz, feedback_items):
+        payload = {
+            "name": quiz.title or "",
+            "student": quiz.student.name if quiz.student else "",
+            "questions": [],
+        }
+
+        for quiz_question in sorted(feedback_items, key=lambda item: item.order):
+            question = quiz_question.question
+            question_payload = {
+                "question": question.question,
+                "answers": list(question.answers or []),
+                "correct_answer_index": question.correct_answer_index,
+                "weight": question.penalty,
+                "feedback": quiz_question.disabled_comment,
+            }
+            if question.code_snippet:
+                question_payload["code_snippet"] = question.code_snippet
+            if question.explanation:
+                question_payload["explanation"] = question.explanation
+            if question.teacher_note:
+                question_payload["teacher_note"] = question.teacher_note
+            if question.source:
+                question_payload["source"] = question.source
+
+            payload["questions"].append(question_payload)
+
+        return payload
 
 
 class TestQuizLinkInline(admin.TabularInline):
