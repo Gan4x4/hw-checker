@@ -7,6 +7,7 @@ from datetime import timedelta
 from pathlib import Path
 from threading import local
 
+from django.conf import settings
 from django.contrib import admin, messages
 from django.contrib.admin.helpers import ACTION_CHECKBOX_NAME
 from django.core.exceptions import ValidationError
@@ -431,6 +432,7 @@ class QuizLinkAdmin(admin.ModelAdmin):
             if form.is_valid():
                 minutes = form.cleaned_data["duration_minutes"]
                 duration = timedelta(minutes=minutes)
+                question_timeout = form.cleaned_data.get("question_timeout_seconds") or None
                 title = form.cleaned_data["title"].strip()
 
                 if not title:
@@ -440,7 +442,11 @@ class QuizLinkAdmin(admin.ModelAdmin):
                     else:
                         title = timezone.now().strftime("Test %Y-%m-%d %H:%M")
 
-                test = Test.objects.create(title=title, duration=duration)
+                test = Test.objects.create(
+                    title=title,
+                    duration=duration,
+                    question_timeout=question_timeout,
+                )
                 queryset.update(test=test)
 
                 reassigned = [quiz for quiz in quizzes if quiz.test_id and quiz.test_id != test.pk]
@@ -1056,6 +1062,7 @@ class TestAdmin(admin.ModelAdmin):
         "title_link",
         "state_display",
         "duration",
+        "question_timeout_display",
         "started_at",
         "finished_at",
         "quiz_count",
@@ -1104,10 +1111,26 @@ class TestAdmin(admin.ModelAdmin):
         view_url = reverse("admin:quiz_test_view", args=[obj.pk])
         return format_html('<a href="{}">{}</a>', view_url, obj.title or _("(Untitled)"))
 
+    @admin.display(description=_("Question timeout"))
+    def question_timeout_display(self, obj):
+        if obj.question_timeout:
+            return _("%(seconds)s seconds") % {"seconds": obj.question_timeout}
+        default_timeout = obj.resolved_question_timeout()
+        return _("Default (%(seconds)s seconds)") % {"seconds": default_timeout}
+
     @admin.display(description=_("Edit"), ordering=False)
     def edit_link(self, obj):
         edit_url = reverse("admin:quiz_test_change", args=[obj.pk])
         return format_html('<a class="button" href="{}">{}</a>', edit_url, _("Edit"))
+
+    def get_changeform_initial_data(self, request):
+        initial = super().get_changeform_initial_data(request)
+        default_timeout = Test._coerce_positive_int(
+            getattr(settings, "QUIZ_QUESTION_TIMEOUT", None),
+            fallback=60,
+        )
+        initial.setdefault("question_timeout", default_timeout)
+        return initial
 
     def changeform_view(self, request, object_id=None, form_url="", extra_context=None):
         obj = self.get_object(request, object_id) if object_id else None

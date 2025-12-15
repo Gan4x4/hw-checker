@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from django import forms
+from django.conf import settings
 
 from .models import Student
 
@@ -42,4 +43,11 @@ class TestCreationForm(forms.Form):
         initial=5,
         label="Duration (minutes)",
         help_text="How long the test remains active after starting.",
+    )
+    question_timeout_seconds = forms.IntegerField(
+        min_value=1,
+        required=False,
+        label="Question timeout (seconds)",
+        help_text="Optional per-question time limit for this test.",
+        initial=getattr(settings, "QUIZ_QUESTION_TIMEOUT", 60),
     )

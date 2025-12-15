@@ -22,10 +22,10 @@ class HomeView(TemplateView):
 
 class QuizSessionView(View):
     template_name = "quiz/question.html"
-    timeout_seconds = getattr(settings, "QUIZ_QUESTION_TIMEOUT", 30)
 
     def get(self, request, token, *args, **kwargs):
         quiz = self._get_quiz(token)
+        timeout_seconds = self._quiz_timeout_seconds(quiz)
         start_key = self._start_flag_key(quiz.pk)
 
         access_allowed, access_context = self._check_test_access(quiz)
@@ -91,13 +91,13 @@ class QuizSessionView(View):
 
         started_at = self._ensure_question_timer(request, quiz, question.id)
         elapsed_seconds = self._elapsed_seconds_since(started_at) or 0.0
-        if elapsed_seconds >= self.timeout_seconds:
+        if elapsed_seconds >= timeout_seconds:
             self._clear_question_timer(request, quiz, question.id)
             Attempt.objects.create(
                 quiz=quiz,
                 question=question,
                 selected_answer_index=None,
-                time_spent=self.timeout_seconds,
+                time_spent=timeout_seconds,
             )
             return redirect("quiz:session", token=quiz.token)
 
@@ -105,7 +105,7 @@ class QuizSessionView(View):
         image_url = f"{settings.MEDIA_URL}{image_path}" if settings.MEDIA_URL else image_path
         request.session["last_image_path"] = image_path
 
-        remaining_seconds = max(0, int(self.timeout_seconds - elapsed_seconds))
+        remaining_seconds = max(0, int(timeout_seconds - elapsed_seconds))
         answers = list(enumerate(question.answers))
         random.shuffle(answers)
 
@@ -117,7 +117,7 @@ class QuizSessionView(View):
             "image_path": image_path,
             "question_number": answered_count + 1,
             "total_questions": total_questions,
-            "timeout_seconds": self.timeout_seconds,
+            "timeout_seconds": timeout_seconds,
             "remaining_seconds": remaining_seconds,
             "question_started_at": started_at,
             "server_now": timezone.now().isoformat(),
@@ -126,6 +126,7 @@ class QuizSessionView(View):
 
     def post(self, request, token, *args, **kwargs):
         quiz = self._get_quiz(token)
+        timeout_seconds = self._quiz_timeout_seconds(quiz)
         start_key = self._start_flag_key(quiz.pk)
 
         access_allowed, access_context = self._check_test_access(quiz)
@@ -199,12 +200,12 @@ class QuizSessionView(View):
 
         started_at = self._get_question_timer(request, quiz, question.id)
         elapsed_seconds = self._elapsed_seconds_since(started_at) if started_at else None
-        if elapsed_seconds is not None and elapsed_seconds >= self.timeout_seconds:
+        if elapsed_seconds is not None and elapsed_seconds >= timeout_seconds:
             selected_index = None
 
         time_spent = None
         if elapsed_seconds is not None:
-            time_spent = max(0.0, min(float(self.timeout_seconds), float(elapsed_seconds)))
+            time_spent = max(0.0, min(float(timeout_seconds), float(elapsed_seconds)))
 
         Attempt.objects.create(
             quiz=quiz,
@@ -279,6 +280,27 @@ class QuizSessionView(View):
 
     def _timer_state_key(self, quiz_id: int) -> str:
         return f"quiz_timer_{quiz_id}"
+
+    def _quiz_timeout_seconds(self, quiz: QuizLink) -> int:
+        test = getattr(quiz, "test", None)
+        if test:
+            return test.resolved_question_timeout()
+        return self._default_timeout_seconds()
+
+    @classmethod
+    def _default_timeout_seconds(cls) -> int:
+        raw_default = getattr(settings, "QUIZ_QUESTION_TIMEOUT", 30)
+        return cls._normalize_timeout(raw_default, fallback=30)
+
+    @staticmethod
+    def _normalize_timeout(raw_value, *, fallback: int) -> int:
+        try:
+            parsed = int(raw_value)
+        except (TypeError, ValueError):
+            return fallback
+        if parsed <= 0:
+            return fallback
+        return parsed
 
     def _ensure_question_timer(self, request, quiz: QuizLink, question_id: int) -> str:
         timer_key = self._timer_state_key(quiz.pk)

@@ -8,6 +8,7 @@ from typing import List
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.core.validators import MinValueValidator
 from django.db import DEFAULT_DB_ALIAS, models
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
@@ -351,6 +352,12 @@ class TestState(models.TextChoices):
 class Test(models.Model):
     title = models.CharField(max_length=255, blank=True)
     duration = models.DurationField(help_text=_("Total time the test stays active."))
+    question_timeout = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(1)],
+        help_text=_("Per-question time limit in seconds. Defaults to QUIZ_QUESTION_TIMEOUT."),
+    )
     state = models.CharField(
         max_length=20,
         choices=TestState.choices,
@@ -435,6 +442,22 @@ class Test(models.Model):
         self.save(update_fields=["state", "started_at", "finished_at"])
 
         return total_attempts
+
+    def resolved_question_timeout(self) -> int:
+        """Return the effective question timeout, falling back to global settings."""
+
+        default_timeout = self._coerce_positive_int(getattr(settings, "QUIZ_QUESTION_TIMEOUT", 30), fallback=30)
+        return self._coerce_positive_int(self.question_timeout, fallback=default_timeout)
+
+    @staticmethod
+    def _coerce_positive_int(value, *, fallback: int) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return fallback
+        if parsed <= 0:
+            return fallback
+        return parsed
 
 
 class QuizQuestion(models.Model):

@@ -7,6 +7,7 @@ from unittest.mock import patch
 from django.contrib.admin.sites import AdminSite
 from django.contrib.auth import get_user_model
 from django.contrib.messages.storage.fallback import FallbackStorage
+from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import RequestFactory, SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
@@ -422,6 +423,59 @@ class TestAccessControlTests(TestCase):
         self.assertTrue(response.context["is_finished"])
 
 
+class QuizTimeoutConfigTests(TestCase):
+    def setUp(self):
+        self.question = Question.objects.create(
+            question="Timed question",
+            answers=["A", "B"],
+            correct_answer_index=0,
+        )
+        self.quiz = QuizLink.objects.create(title="Timed quiz")
+        QuizQuestion.objects.create(quiz=self.quiz, question=self.question, order=1)
+        self.test = Test.objects.create(title="Timed test", duration=timedelta(minutes=5))
+        self.quiz.test = self.test
+        self.quiz.save(update_fields=["test"])
+
+    def _start_session(self):
+        self.test.start()
+        session = self.client.session
+        session[QuizSessionView._start_flag_key(self.quiz.pk)] = True
+        session.save()
+
+    @override_settings(QUIZ_QUESTION_TIMEOUT=45)
+    def test_test_specific_timeout_overrides_global(self):
+        self.test.question_timeout = 12
+        self.test.save(update_fields=["question_timeout"])
+
+        self._start_session()
+        response = self.client.get(reverse("quiz:session", args=[self.quiz.token]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["timeout_seconds"], 12)
+
+    @override_settings(QUIZ_QUESTION_TIMEOUT=33)
+    def test_global_timeout_used_when_test_has_no_override(self):
+        self._start_session()
+
+        response = self.client.get(reverse("quiz:session", args=[self.quiz.token]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["timeout_seconds"], 33)
+
+    @override_settings(QUIZ_QUESTION_TIMEOUT=27)
+    def test_quiz_without_test_uses_global_timeout(self):
+        standalone_quiz = QuizLink.objects.create(title="Standalone quiz")
+        QuizQuestion.objects.create(quiz=standalone_quiz, question=self.question, order=1)
+        session = self.client.session
+        session[QuizSessionView._start_flag_key(standalone_quiz.pk)] = True
+        session.save()
+
+        response = self.client.get(reverse("quiz:session", args=[standalone_quiz.token]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["timeout_seconds"], 27)
+
+
 class TestAdminStartTests(TestCase):
     def setUp(self):
         self.admin_site = AdminSite()
@@ -461,6 +515,14 @@ class TestAdminStartTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.test.refresh_from_db()
         self.assertEqual(self.test.state, TestState.ACTIVE)
+
+    @override_settings(QUIZ_QUESTION_TIMEOUT=99)
+    def test_add_form_prefills_question_timeout(self):
+        request = self.factory.get("/admin/quiz/test/add/")
+        request.user = self.superuser
+        initial = self.admin.get_changeform_initial_data(request)
+
+        self.assertEqual(initial["question_timeout"], 99)
 
     def test_reset_button_returns_test_to_draft_and_clears_quizzes(self):
         self.test.start()
