@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Iterable, List, Mapping
 
 from django.conf import settings
+from django.db import transaction
 from django.utils.html import conditional_escape
 from django.utils.safestring import mark_safe
 
@@ -140,70 +141,61 @@ def find_participants_csv() -> Path | None:
     return None
 
 
-def _import_students(rows: Iterable[Mapping[str, str | None]]) -> int:
-    """Create or update students based on the provided iterable of CSV rows."""
+@transaction.atomic
+def _import_students(rows: Iterable[Mapping[str, str | None]], *, academic_year: str | None = None) -> int:
+    """Import one academic year atomically, preserving omitted optional fields."""
+    from .models import Student, default_academic_year
 
-    from .models import Student
-
-    created_or_updated = 0
-    for row in rows:
+    year = Student._meta.get_field("academic_year").clean(
+        default_academic_year() if academic_year is None else academic_year, None
+    )
+    changed = 0
+    for row_number, row in enumerate(rows, start=2):
+        if None not in row and not any((value or "").strip() for value in row.values()):
+            continue
+        if None in row:
+            raise ValueError(f"CSV row {row_number} has more values than its header.")
         name = (row.get("name") or "").strip()
         email = (row.get("email") or "").strip()
         if not name or not email:
-            continue
-
-        course = (row.get("course") or "").strip()
-        group = (row.get("group") or "").strip()
-
-        obj, created = Student.objects.get_or_create(
-            email=email,
-            defaults={"name": name, "course": course, "group": group},
+            raise ValueError(f"CSV row {row_number} requires name and email.")
+        values = {"name": name}
+        for field in ("course", "group"):
+            if field in row:
+                values[field] = (row[field] or "").strip()
+        student, created = Student.objects.get_or_create(
+            email=email, academic_year=year, defaults=values
         )
-
-        if created:
-            created_or_updated += 1
-            continue
-
-        updated_fields = []
-        if obj.name != name:
-            obj.name = name
-            updated_fields.append("name")
-        if obj.course != course:
-            obj.course = course
-            updated_fields.append("course")
-        if obj.group != group:
-            obj.group = group
-            updated_fields.append("group")
-
+        updated_fields = [field for field, value in values.items() if getattr(student, field) != value]
+        for field, value in values.items():
+            setattr(student, field, value)
+        student.full_clean()
         if updated_fields:
-            obj.save(update_fields=updated_fields)
-            created_or_updated += 1
+            student.save(update_fields=updated_fields)
+        changed += bool(created or updated_fields)
+    return changed
 
-    return created_or_updated
 
-
-def import_students_from_file(handle: io.TextIOBase) -> int:
-    """Import students from an open text file handle."""
-
+def import_students_from_file(handle: io.TextIOBase, *, academic_year: str | None = None) -> int:
     reader = csv.DictReader(handle)
-    return _import_students(reader)
+    # Skip spreadsheet export padding before the header (including rows of commas).
+    while reader.fieldnames is not None and not any(value.lstrip("\ufeff").strip() for value in reader.fieldnames):
+        reader.fieldnames = None
+    aliases = {"фио": "name", "курс": "course", "группа": "group"}
+    headers = [value.lstrip("\ufeff").strip().lower() for value in (reader.fieldnames or [])]
+    reader.fieldnames = [aliases.get(value, value) for value in headers]
+    if len(set(reader.fieldnames)) != len(reader.fieldnames) or not {"name", "email"}.issubset(reader.fieldnames):
+        raise ValueError("CSV requires unique name (or ФИО) and email columns.")
+    return _import_students(reader, academic_year=academic_year)
 
 
-def import_students_from_content(content: str) -> int:
-    """Import students from CSV content represented as a string."""
-
-    return import_students_from_file(io.StringIO(content))
+def import_students_from_content(content: str, *, academic_year: str | None = None) -> int:
+    return import_students_from_file(io.StringIO(content), academic_year=academic_year)
 
 
-def sync_students_from_csv(path: Path | None = None) -> int:
-    """Populate the Student table from the participants CSV.
-
-    Returns the number of students created or updated.
-    """
-
+def sync_students_from_csv(path: Path | None = None, *, academic_year: str | None = None) -> int:
     participants_path = path or find_participants_csv()
     if not participants_path:
         return 0
-
-    with participants_path.open(encoding="utf-8") as handle:
-        return import_students_from_file(handle)
+    with participants_path.open(encoding="utf-8-sig") as handle:
+        return import_students_from_file(handle, academic_year=academic_year)

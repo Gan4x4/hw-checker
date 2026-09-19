@@ -1,0 +1,70 @@
+{% extends "admin/change_list.html" %}
+{% load i18n admin_list quiz_extras %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+    #changelist.filtered { min-height: 0; }
+    .list-header, .list-controls, .list-filters {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+    .list-header {
+        padding: 12px;
+        background: var(--darkened-bg);
+        border-bottom: 1px solid var(--hairline-color);
+    }
+    .list-header #toolbar { flex: 1; margin: 0; padding: 0; border: 0; }
+    .list-header .object-tools {
+        display: flex;
+        gap: 8px;
+        float: none;
+        margin: 0 0 0 auto;
+        padding: 0;
+    }
+    .list-header .object-tools li { float: none; height: auto; margin: 0; }
+    .list-header .object-tools a { padding-top: 9px; padding-bottom: 9px; border-radius: 4px; }
+    .list-controls { padding: 10px 12px; border-bottom: 1px solid var(--hairline-color); }
+    #changelist .list-controls .actions { padding: 0; width: auto; }
+    .list-filters { margin-left: auto; }
+    .list-filters label { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+    .list-filters select { max-width: 220px; }
+    .list-controls select, #changelist .list-controls .actions select,
+    #changelist .list-controls .actions .button { min-height: 32px; height: auto; }
+    @media (max-width: 767px) {
+        .list-header #toolbar { flex-basis: 100%; }
+        .list-header #searchbar { max-width: 65%; }
+        .list-filters { margin-left: 0; }
+        .list-filters label { flex-wrap: wrap; }
+    }
+</style>
+{% endblock %}
+
+{% block object-tools %}{% endblock %}
+
+{% block search %}
+<div class="list-header">
+    {% search_form cl %}
+    <ul class="object-tools">
+        {% block object-tools-items %}{% change_list_object_tools %}{% endblock %}
+    </ul>
+</div>
+{% endblock %}
+
+{% block result_list %}
+<div class="list-controls">
+    {% if action_form and actions_on_top and cl.show_admin_actions %}{% admin_actions %}{% endif %}
+    {% if cl.has_filters %}
+    <div class="list-filters" role="group" aria-label="{% translate 'Filters' %}">
+        {% for spec in cl.filter_specs %}{% compact_admin_filter cl spec %}{% endfor %}
+        {% if cl.has_active_filters %}<a href="{{ cl.clear_all_filters_qs }}">{% translate "Clear filters" %}</a>{% endif %}
+    </div>
+    {% endif %}
+</div>
+{% result_list cl %}
+{% if action_form and actions_on_bottom and cl.show_admin_actions %}{% admin_actions %}{% endif %}
+{% endblock %}
+
+{% block filters %}{% endblock %}

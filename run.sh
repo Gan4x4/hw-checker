@@ -1,5 +1,11 @@
 #!/bin/bash
+set -e
 
-# Activate local virtualenv (assumes it was created with `python3 -m venv .venv`)
-source .venv/bin/activate
-python manage.py runserver
+# Resolve the project relative to this script, including from another directory.
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+if [ -f .env ]; then
+    set -a
+    source .env
+    set +a
+fi
+exec .venv/bin/python manage.py runserver "$@"

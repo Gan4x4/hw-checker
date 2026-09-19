@@ -1,0 +1,8 @@
+<label>
+    {{ title|capfirst }}
+    <select onchange="window.location.assign(this.value)">
+        {% for choice in choices %}
+        <option value="{{ choice.query_string }}"{% if choice.selected %} selected{% endif %}>{{ choice.display }}</option>
+        {% endfor %}
+    </select>
+</label>

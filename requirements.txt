@@ -1,6 +1,10 @@
-Django==4.1,<4.2
+# Pinned to the deployed baseline; framework upgrades are a separate change.
+Django==4.1
 Pillow==11.3.0
-PyMySQL>=1.1,<1.2
-gunicorn
-dj-database-url>=2.0  # keep if you're using it already
-
+PyMySQL==1.1.2
+gunicorn==23.0.0
+dj-database-url==2.2.0
+asgiref==3.9.1
+packaging==25.0
+sqlparse==0.5.3
+typing_extensions==4.15.0

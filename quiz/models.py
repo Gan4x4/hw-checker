@@ -8,7 +8,7 @@ from typing import List
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.core.validators import MinValueValidator
+from django.core.validators import MinValueValidator, RegexValidator
 from django.db import DEFAULT_DB_ALIAS, models
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
@@ -16,6 +16,12 @@ from django.utils.translation import gettext_lazy as _
 from PIL import Image, ImageDraw, ImageFont
 
 from .utils import wrap_code_snippet, wrap_text_to_lines
+
+academic_year_validator = RegexValidator(r"\A[0-9]{4}_[0-9]{2}\Z", "Use YYYY_YY, for example 2026_27.")
+
+
+def default_academic_year():
+    return getattr(settings, "DEFAULT_ACADEMIC_YEAR", "2026_27")
 
 
 def _answers_default() -> List[str]:
@@ -52,15 +58,22 @@ def _load_font(size: int = 16, *, bold: bool = False) -> "ImageFont.ImageFont":
 
 class Student(models.Model):
     name = models.CharField(max_length=255)
-    email = models.EmailField(unique=True)
+    email = models.EmailField()
+    academic_year = models.CharField(max_length=7, default=default_academic_year, validators=[academic_year_validator], db_index=True)
     course = models.CharField(max_length=255, blank=True)
     group = models.CharField(max_length=255, blank=True)
 
     class Meta:
         ordering = ["name"]
+        constraints = [models.UniqueConstraint(fields=["email", "academic_year"], name="student_email_academic_year")]
 
     def __str__(self) -> str:  # pragma: no cover - admin display helper
-        return self.name or self.email
+        return f"{self.name or self.email} ({self.academic_year})"
+
+    def clean(self):
+        super().clean()
+        if self.pk and self.quizzes.exclude(academic_year=self.academic_year).exists():
+            raise ValidationError({"academic_year": "The student's quizzes must have the same academic year."})
 
 
 class Question(models.Model):
@@ -201,6 +214,7 @@ class Question(models.Model):
 
 
 class QuizLink(models.Model):
+    academic_year = models.CharField(max_length=7, default=default_academic_year, validators=[academic_year_validator], db_index=True)
     token = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     title = models.CharField(max_length=255, blank=True)
     original_filename = models.CharField(max_length=500, blank=True, default="")
@@ -239,6 +253,13 @@ class QuizLink(models.Model):
         if limit is not None:
             return queryset[:limit]
         return queryset
+
+    def clean(self):
+        super().clean()
+        for field in ("student", "test"):
+            related = getattr(self, field, None)
+            if related and related.academic_year != self.academic_year:
+                raise ValidationError({field: "Choose a record from the quiz's academic year."})
 
     def ensure_included_question_ids(self, *, force: bool = False, persist: bool = False) -> list[int]:
         if self.included_question_ids and not force:
@@ -350,6 +371,7 @@ class TestState(models.TextChoices):
 
 
 class Test(models.Model):
+    academic_year = models.CharField(max_length=7, default=default_academic_year, validators=[academic_year_validator], db_index=True)
     title = models.CharField(max_length=255, blank=True)
     duration = models.DurationField(help_text=_("Total time the test stays active."))
     question_timeout = models.PositiveIntegerField(
@@ -377,6 +399,8 @@ class Test(models.Model):
         super().clean()
         if self.duration and self.duration <= timedelta(0):
             raise ValidationError("Duration must be positive.")
+        if self.pk and self.quizzes.exclude(academic_year=self.academic_year).exists():
+            raise ValidationError({"academic_year": "The test's quizzes must have the same academic year."})
 
     def refresh_state(self, *, commit: bool = True) -> str:
         """Update the state based on current time and return it."""

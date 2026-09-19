@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
+import os
+import runpy
 from datetime import timedelta
+from pathlib import Path
 from unittest.mock import patch
 
 from django.contrib.admin.sites import AdminSite
 from django.contrib.auth import get_user_model
 from django.contrib.messages.storage.fallback import FallbackStorage
 from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import RequestFactory, SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
@@ -19,6 +23,33 @@ from .models import Attempt, Question, QuizLink, QuizQuestion, Student, Test, Te
 from .templatetags.quiz_extras import wrap_long_lines
 from .utils import wrap_code_snippet, wrap_text, wrap_text_html, wrap_text_to_lines
 from .views import QuizQuestionFeedbackView, QuizSessionView
+
+
+class SettingsTests(SimpleTestCase):
+    def load_settings(self, environment):
+        with patch.dict(os.environ, environment, clear=True):
+            return runpy.run_path(str(Path(__file__).resolve().parent.parent / "config/settings.py"))
+
+    def test_production_requires_secret(self):
+        for environment in ({}, {"SECRET_KEY": "dev-secret"}):
+            with self.assertRaises(ImproperlyConfigured):
+                self.load_settings(environment)
+
+    def test_production_security_and_explicit_proxy_trust(self):
+        config = self.load_settings({"SECRET_KEY": "test-only-secret"})
+        self.assertFalse(config["DEBUG"])
+        for name in ("SESSION_COOKIE_SECURE", "CSRF_COOKIE_SECURE", "SECURE_SSL_REDIRECT"):
+            self.assertTrue(config[name])
+        self.assertEqual(config["SECURE_HSTS_SECONDS"], 3600)
+        self.assertNotIn("SECURE_PROXY_SSL_HEADER", config)
+        config = self.load_settings({"SECRET_KEY": "test-only-secret", "TRUST_PROXY_SSL_HEADER": "True"})
+        self.assertEqual(config["SECURE_PROXY_SSL_HEADER"], ("HTTP_X_FORWARDED_PROTO", "https"))
+
+    def test_development_works_over_http(self):
+        config = self.load_settings({"DEBUG": "True"})
+        self.assertEqual(config["SECRET_KEY"], "dev-secret")
+        for name in ("SESSION_COOKIE_SECURE", "CSRF_COOKIE_SECURE", "SECURE_SSL_REDIRECT", "SECURE_HSTS_SECONDS"):
+            self.assertFalse(config[name])
 
 
 class TextWrappingTests(SimpleTestCase):
@@ -617,7 +648,10 @@ class TestAdminImportQuestionsTests(TestCase):
         self.assertEqual(quiz.title, "Popov_questions")
         self.assertEqual(quiz.original_filename, "Popov_questions.json")
 
+    @override_settings(QUIZ_TITLE_MAX_LENGTH=20)
     def test_import_uses_shortened_title_and_preserves_original_filename(self):
+        self.student.name = "Максимов Тимофей Степанович"
+        self.student.save(update_fields=["name"])
         long_filename = "Максимов Тимофей Степанович_4257171_assignsubmission_file_Maksimov_T_EX3_Multilabel_questions.json"
         upload = self._build_upload(long_filename)
         url = reverse("admin:quiz_test_change", args=[self.test.pk])

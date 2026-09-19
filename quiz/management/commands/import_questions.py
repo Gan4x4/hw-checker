@@ -6,9 +6,10 @@ from typing import Any, Dict, List, Tuple
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
+from django.core.exceptions import ValidationError
 from django.db import transaction
 
-from quiz.models import Attempt, Question, QuizLink, QuizQuestion
+from quiz.models import Question, QuizLink, QuizQuestion, default_academic_year
 
 
 class QuizImportError(Exception):
@@ -163,7 +164,14 @@ def import_quiz_from_json(
     default_name: str,
     replace: bool = False,
     source_filename: str | None = None,
+    academic_year: str | None = None,
 ) -> Tuple[QuizLink, int, str | None]:
+    try:
+        year = QuizLink._meta.get_field("academic_year").clean(
+            default_academic_year() if academic_year is None else academic_year, None
+        )
+    except ValidationError as exc:
+        raise QuizImportError(str(exc)) from exc
     try:
         payload = json.loads(content)
     except json.JSONDecodeError as exc:
@@ -175,10 +183,10 @@ def import_quiz_from_json(
 
     with transaction.atomic():
         if replace:
-            Attempt.objects.all().delete()
-            QuizQuestion.objects.all().delete()
-            QuizLink.objects.all().delete()
-            Question.objects.all().delete()
+            quizzes = QuizLink.objects.filter(academic_year=year)
+            question_ids = list(Question.objects.filter(quiz_links__in=quizzes).values_list("pk", flat=True))
+            quizzes.delete()
+            Question.objects.filter(pk__in=question_ids, quiz_links__isnull=True).delete()
 
         for question in questions:
             question.save()
@@ -186,6 +194,7 @@ def import_quiz_from_json(
         quiz = QuizLink.objects.create(
             title=quiz_title,
             original_filename=original_filename,
+            academic_year=year,
         )
         for order, question in enumerate(questions, start=1):
             QuizQuestion.objects.create(quiz=quiz, question=question, order=order)
@@ -194,13 +203,14 @@ def import_quiz_from_json(
 
 
 def import_quiz_from_path(
-    path: Path, *, replace: bool = False
+    path: Path, *, replace: bool = False, academic_year: str | None = None
 ) -> Tuple[QuizLink, int, str | None]:
     return import_quiz_from_json(
         path.read_text(encoding="utf-8"),
         default_name=path.name,
         replace=replace,
         source_filename=path.name,
+        academic_year=academic_year,
     )
 
 
@@ -208,11 +218,12 @@ class Command(BaseCommand):
     help = "Import questions and create a quiz from a JSON file."
 
     def add_arguments(self, parser) -> None:
+        parser.add_argument("--academic-year", help="Academic year (YYYY_YY); defaults to DEFAULT_ACADEMIC_YEAR.")
         parser.add_argument("json_path", type=str, help="Path to the JSON file containing questions")
         parser.add_argument(
             "--replace",
             action="store_true",
-            help="Delete all existing quizzes, questions, and attempts before importing the file.",
+            help="Replace quizzes and their unshared questions/attempts in the selected academic year only.",
         )
 
     def handle(self, json_path: str, replace: bool, **options) -> None:
@@ -221,7 +232,7 @@ class Command(BaseCommand):
             raise CommandError(f"File not found: {path}")
 
         try:
-            quiz, created, _ = import_quiz_from_path(path, replace=replace)
+            quiz, created, _ = import_quiz_from_path(path, replace=replace, academic_year=options["academic_year"])
         except QuizImportError as exc:
             raise CommandError(str(exc)) from exc
 

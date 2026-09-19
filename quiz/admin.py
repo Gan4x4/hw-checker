@@ -21,12 +21,11 @@ from django.utils.html import format_html
 from django.utils.text import slugify
 from django.utils.translation import gettext_lazy as _
 
-from .forms import QuizImportForm, StudentImportForm, TestCreationForm
+from .forms import QuizImportForm, StudentImportForm, TestAdminForm, TestCreationForm
 from .management.commands.import_questions import QuizImportError, import_quiz_from_json, _short_title_from_filename
-from .models import Attempt, Question, QuizLink, QuizQuestion, QuizQuestionFeedback, Student, Test, TestState
+from .models import Attempt, Question, QuizLink, QuizQuestion, QuizQuestionFeedback, Student, Test, TestState, default_academic_year
 from .utils import (
     import_students_from_content,
-    sync_students_from_csv,
     wrap_code_snippet,
     wrap_text_html,
 )
@@ -43,6 +42,16 @@ def _tokenize_value(value: str | None) -> set[str]:
     if not value:
         return set()
 
+    # ponytail: Russian transliteration only; other alphabets need explicit matching rules.
+    latin = value.lower().translate(str.maketrans({
+        "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
+        "ж": "zh", "з": "z", "и": "i", "й": "i", "к": "k", "л": "l", "м": "m",
+        "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+        "ф": "f", "х": "kh", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "shch",
+        "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "iu", "я": "ia",
+    }))
+    # Accept both ya/ia, yu/iu and y/i spellings in generated filenames.
+    latin = latin.replace("ya", "ia").replace("yu", "iu").replace("yo", "e").replace("y", "i")
     tokens: set[str] = set()
 
     def _split_parts(text: str) -> None:
@@ -53,11 +62,12 @@ def _tokenize_value(value: str | None) -> set[str]:
             if part:
                 tokens.add(part)
 
-    for allow_unicode in (True, False):
-        slug = slugify(value, allow_unicode=allow_unicode)
-        if slug:
-            tokens.add(slug)
-            _split_parts(slug)
+    for text in (value, latin):
+        for allow_unicode in (True, False):
+            slug = slugify(text, allow_unicode=allow_unicode)
+            if slug:
+                tokens.add(slug)
+                _split_parts(slug)
 
     alnum = re.sub(r"[^\dA-Za-z\u0400-\u04FF]+", " ", value).strip().lower()
     if alnum:
@@ -114,18 +124,45 @@ def _infer_student_from_filename(filename, student_tokens):
     return top_student
 
 
+class AcademicYearFilter(admin.SimpleListFilter):
+    title = _("academic year")
+    parameter_name = "academic_year"
+
+    def lookups(self, request, model_admin):
+        self.field_path = getattr(model_admin, "academic_year_lookup", "academic_year")
+        years = set(model_admin.get_queryset(request).values_list(self.field_path, flat=True))
+        years.discard(None)
+        return [(year, year) for year in sorted(years | {default_academic_year()})]
+
+    def value(self):
+        return super().value() or default_academic_year()
+
+    def queryset(self, request, queryset):
+        return queryset if self.value() == "all" else queryset.filter(**{self.field_path: self.value()}).distinct()
+
+    def choices(self, changelist):
+        choices = list(super().choices(changelist))
+        choices[0].update(
+            selected=self.value() == "all",
+            query_string=changelist.get_query_string({self.parameter_name: "all"}),
+        )
+        yield from choices
+
+
 @admin.register(Student)
 class StudentAdmin(admin.ModelAdmin):
     list_display = (
         "name",
         "email",
         "course",
+        "academic_year",
         "group",
         "overall_grade",
         "score_percent",
         "student_actions",
     )
     search_fields = ("name", "email")
+    list_filter = (AcademicYearFilter,)
     change_list_template = "admin/quiz/student/change_list.html"
 
     def get_queryset(self, request):
@@ -214,7 +251,7 @@ class StudentAdmin(admin.ModelAdmin):
                 form.add_error("csv_file", _("File must be valid UTF-8 encoded CSV."))
             else:
                 try:
-                    created = import_students_from_content(content)
+                    created = import_students_from_content(content, academic_year=form.cleaned_data["academic_year"])
                 except Exception as exc:  # pragma: no cover - handled via admin feedback
                     form.add_error("csv_file", str(exc))
                 else:
@@ -288,8 +325,11 @@ class StudentAdmin(admin.ModelAdmin):
 
 @admin.register(Question)
 class QuestionAdmin(admin.ModelAdmin):
+    change_list_template = "admin/quiz/change_list.html"
     list_display = ("id", "short_question", "penalty")
     search_fields = ("question", "code_snippet")
+    academic_year_lookup = "quiz_links__academic_year"
+    list_filter = (AcademicYearFilter,)
 
     @staticmethod
     def short_question(obj):  # pragma: no cover - admin display helper
@@ -307,6 +347,7 @@ class QuizLinkAdmin(admin.ModelAdmin):
         "token",
         "title",
         "student",
+        "academic_year",
         "test_display",
         "created_at",
         "completed_at",
@@ -314,7 +355,7 @@ class QuizLinkAdmin(admin.ModelAdmin):
         "score_display",
         "admin_actions",
     )
-    list_filter = ("test", "student")
+    list_filter = (AcademicYearFilter, "test", "student")
     inlines = [QuizQuestionInline]
     readonly_fields = ("token", "original_filename", "created_at", "completed_at")
     change_list_template = "admin/quiz/quizlink/change_list.html"
@@ -419,6 +460,11 @@ class QuizLinkAdmin(admin.ModelAdmin):
 
         quizzes = list(queryset.select_related("student", "test"))
 
+        years = {quiz.academic_year for quiz in quizzes}
+        if len(years) > 1:
+            self.message_user(request, _("Select quizzes from a single academic year."), level=messages.ERROR)
+            return None
+
         if not quizzes:
             self.message_user(
                 request,
@@ -443,6 +489,7 @@ class QuizLinkAdmin(admin.ModelAdmin):
                         title = timezone.now().strftime("Test %Y-%m-%d %H:%M")
 
                 test = Test.objects.create(
+                    academic_year=quizzes[0].academic_year,
                     title=title,
                     duration=duration,
                     question_timeout=question_timeout,
@@ -487,7 +534,6 @@ class QuizLinkAdmin(admin.ModelAdmin):
     make_test_action.short_description = _("Make test")
 
     def import_view(self, request):
-        sync_students_from_csv()
         form = QuizImportForm(request.POST or None, request.FILES or None)
 
         if request.method == "POST" and form.is_valid():
@@ -503,6 +549,7 @@ class QuizLinkAdmin(admin.ModelAdmin):
                         content,
                         default_name=default_name,
                         source_filename=upload.name,
+                        academic_year=form.cleaned_data["academic_year"],
                     )
                 except QuizImportError as exc:
                     form.add_error("json_file", str(exc))
@@ -519,7 +566,10 @@ class QuizLinkAdmin(admin.ModelAdmin):
                     selected_student = form.cleaned_data.get("student")
                     student = selected_student
                     if student is None and json_student_name:
-                        student = Student.objects.filter(name__icontains=json_student_name).first()
+                        matches = list(Student.objects.filter(
+                            academic_year=quiz.academic_year, name__icontains=json_student_name
+                        )[:2])
+                        student = matches[0] if len(matches) == 1 else None
                     if student:
                         quiz.student = student
                         updates.append("student")
@@ -919,6 +969,8 @@ class QuizLinkAdmin(admin.ModelAdmin):
 
 @admin.register(QuizQuestionFeedback)
 class QuizQuestionFeedbackAdmin(admin.ModelAdmin):
+    academic_year_lookup = "quiz__academic_year"
+    list_filter = (AcademicYearFilter,)
     change_list_template = "admin/quiz/quizlink/change_list.html"
     actions = ["export_feedback_action"]
     list_display = (
@@ -1058,10 +1110,14 @@ class TestQuizLinkInline(admin.TabularInline):
 
 @admin.register(Test)
 class TestAdmin(admin.ModelAdmin):
+    form = TestAdminForm
+    change_list_template = "admin/quiz/change_list.html"
+    list_filter = (AcademicYearFilter,)
     list_display = (
         "title_link",
+        "academic_year",
         "state_display",
-        "duration",
+        "duration_minutes",
         "question_timeout_display",
         "started_at",
         "finished_at",
@@ -1072,6 +1128,15 @@ class TestAdmin(admin.ModelAdmin):
     readonly_fields = ("state", "started_at", "finished_at", "created_at")
     inlines = []
     change_form_template = "admin/quiz/test/change_form.html"
+
+    def get_fields(self, request, obj=None):
+        if obj is None:
+            return self.form.Meta.fields
+        return super().get_fields(request, obj)
+
+    @admin.display(description=_("Duration (minutes)"), ordering="duration")
+    def duration_minutes(self, obj):
+        return f"{obj.duration.total_seconds() / 60:g}"
 
     def get_urls(self):
         urls = super().get_urls()
@@ -1312,7 +1377,7 @@ class TestAdmin(admin.ModelAdmin):
     def _import_quizzes_into_test(self, request, test, uploads):
         student_tokens = [
             (student, _student_slug_tokens(student))
-            for student in Student.objects.all()
+            for student in Student.objects.filter(academic_year=test.academic_year)
         ]
         existing_student_ids = set(
             test.quizzes.exclude(student=None).values_list("student_id", flat=True)
@@ -1328,8 +1393,8 @@ class TestAdmin(admin.ModelAdmin):
             if not student:
                 self.message_user(
                     request,
-                    _("Skipped %(file)s: could not infer a student.")
-                    % {"file": filename},
+                    _("Skipped %(file)s: could not uniquely match a student in academic year %(year)s.")
+                    % {"file": filename, "year": test.academic_year},
                     level=messages.WARNING,
                 )
                 continue
@@ -1360,6 +1425,7 @@ class TestAdmin(admin.ModelAdmin):
                     content,
                     default_name=default_name,
                     source_filename=filename,
+                    academic_year=test.academic_year,
                 )
             except QuizImportError as exc:
                 self.message_user(
@@ -1410,8 +1476,10 @@ class TestAdmin(admin.ModelAdmin):
 
 @admin.register(Attempt)
 class AttemptAdmin(admin.ModelAdmin):
+    change_list_template = "admin/quiz/change_list.html"
     list_display = ("quiz", "question", "selected_answer_index", "is_correct", "time_spent", "created_at")
-    list_filter = ("quiz", "is_correct")
+    academic_year_lookup = "quiz__academic_year"
+    list_filter = (AcademicYearFilter, "quiz", "is_correct")
     search_fields = ("question__question",)
     readonly_fields = ("quiz", "question", "selected_answer_index", "is_correct", "time_spent", "created_at")
 

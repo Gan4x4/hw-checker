@@ -1,13 +1,57 @@
-{% extends "admin/change_list.html" %}
+{% extends "admin/quiz/change_list.html" %}
 {% load i18n %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+    #student-import-module {
+        padding: 16px;
+        margin-bottom: 20px;
+        border: 1px solid var(--hairline-color);
+        border-radius: 6px;
+        background: var(--darkened-bg);
+    }
+    #student-import-module h2 { padding: 0; margin: 0 0 14px; background: none; color: var(--body-fg); }
+    .student-import-form { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 12px 18px; }
+    .student-import-field { display: flex; flex-direction: column; gap: 6px; }
+    .student-import-field label { font-weight: 600; }
+    #student-import-module input { box-sizing: border-box; min-height: 38px; }
+    #student-import-module input[name="academic_year"] { width: 140px; }
+    #student-import-module input[type="file"] { padding: 7px 0; max-width: 100%; }
+    #student-import-module button {
+        float: none;
+        margin-top: 22px;
+        padding: 10px 24px;
+        min-height: 40px;
+        font-size: 14px;
+        font-weight: 600;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+    #student-import-module .help { flex-basis: 100%; margin: 0; padding: 0; color: var(--body-quiet-color); }
+    #student-import-module .errorlist { margin: 0; }
+    @media (max-width: 767px) {
+        .student-import-field { max-width: 100%; }
+        #student-import-module button { margin-top: 0; }
+    }
+</style>
+{% endblock %}
 
 {% block content %}
     <div class="module" id="student-import-module">
         <h2>{% trans "Import students" %}</h2>
-        <form method="post" enctype="multipart/form-data" novalidate>
+        <form method="post" enctype="multipart/form-data" class="student-import-form">
             {% csrf_token %}
-            {{ import_form.as_p }}
-            <button type="submit" class="button default">{% trans "Import" %}</button>
+            {{ import_form.non_field_errors }}
+            {% for field in import_form %}
+            <div class="student-import-field">
+                {{ field.label_tag }}
+                {{ field }}
+                {{ field.errors }}
+            </div>
+            {% endfor %}
+            <button type="submit" class="button default">{% trans "Import students" %}</button>
+            <p class="help">{{ import_form.csv_file.help_text }}</p>
         </form>
     </div>
     {{ block.super }}
