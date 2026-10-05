@@ -1,23 +1,50 @@
 from __future__ import annotations
 
+import csv
 import random
 from datetime import datetime
 from pathlib import Path
 from typing import List
 
 from django.conf import settings
-from django.http import HttpResponseBadRequest, JsonResponse
+from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.generic import TemplateView, View
+from django.views.decorators.http import require_safe
 from django.utils import timezone
 
-from .models import Attempt, QuizLink, TestState
+from .models import Attempt, QuizLink, Test, TestState
 from .utils import wrap_code_snippet, wrap_text_html
 
 
 class HomeView(TemplateView):
     template_name = "quiz/home.html"
+
+
+@require_safe
+def test_results_csv(request, token):
+    test = get_object_or_404(Test, results_token=token)
+    response = HttpResponse(content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = f'attachment; filename="test-{test.pk}-results.csv"'
+    response["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+    response["Cache-Control"] = "private, no-store"
+    response["Referrer-Policy"] = "no-referrer"
+    response.write("\ufeff")
+    writer = csv.writer(response)
+    writer.writerow(["Student name", "Final score (%)"])
+    students = {}
+    for quiz in test.quizzes.filter(student__isnull=False).select_related("student").order_by("student__name", "student_id", "pk"):
+        totals = students.setdefault(quiz.student_id, [quiz.student.name, 0, 0])
+        correct, total = quiz.result_score()
+        totals[1] += correct
+        totals[2] += total
+    for name, correct, total in students.values():
+        # CSV quoting alone does not stop spreadsheet formula execution.
+        if name.lstrip().startswith(("=", "+", "-", "@")) or name.startswith(("\t", "\r", "\n")):
+            name = "'" + name
+        writer.writerow([name, f"{correct / total * 100:.2f}" if total else ""])
+    return response
 
 
 class QuizSessionView(View):

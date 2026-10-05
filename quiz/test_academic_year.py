@@ -230,9 +230,11 @@ class AcademicYearMigrationTests(TransactionTestCase):
             apps.get_model("quiz", "QuizLink").objects.create()
             executor = MigrationExecutor(connection)
             executor.migrate(after)
+            apps = executor.loader.project_state(after).apps
             for model in (Student, Test, QuizLink):
-                self.assertEqual(model.objects.get().academic_year, "2025_26")
+                self.assertEqual(apps.get_model("quiz", model.__name__).objects.get().academic_year, "2025_26")
             self.assertEqual(Student.objects.get().course, "3 курс")
             self.assertEqual(Student(name="New", email="new@example.com").academic_year, "2030_31")
         finally:
-            MigrationExecutor(connection).migrate(after)
+            executor = MigrationExecutor(connection)
+            executor.migrate(executor.loader.graph.leaf_nodes())

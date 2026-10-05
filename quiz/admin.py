@@ -904,28 +904,7 @@ class QuizLinkAdmin(admin.ModelAdmin):
 
     @admin.display(description=_("Score"), ordering="correct_total")
     def score_display(self, obj):
-        included_ids = set(getattr(obj, "included_question_ids", None) or [])
-
-        if included_ids:
-            total_questions = obj.quiz_questions.filter(
-                id__in=included_ids,
-                is_disabled=False,
-            ).count()
-        else:
-            total_questions = getattr(obj, "question_total", None)
-            if total_questions is None:
-                total_questions = obj.total_questions()
-
-        attempts_queryset = obj.attempts.filter(
-            is_correct=True,
-            question__quizquestion__quiz=obj,
-            question__quizquestion__is_disabled=False,
-        )
-        if included_ids:
-            attempts_queryset = attempts_queryset.filter(
-                question__quizquestion__id__in=included_ids
-            )
-        correct_answers = attempts_queryset.distinct().count()
+        correct_answers, total_questions = obj.result_score()
 
         if not total_questions:
             return "—"
@@ -1368,6 +1347,7 @@ class TestAdmin(admin.ModelAdmin):
                     "remaining_seconds": obj.remaining_seconds(),
                     "has_quizzes": has_quizzes,
                     "can_reset": can_reset,
+                    "results_export_url": request.build_absolute_uri(reverse("quiz:test_results_csv", args=[obj.results_token])),
                     "show_import_form": True,
                     "quizzes": quizzes,
                     "view_only": extra_context.get("view_only", False) if extra_context else False,

@@ -22,25 +22,23 @@
             {% if kind == 'incorrect' %}
                 <th scope="col">{% trans "Selected answer" %}</th>
                 <th scope="col">{% trans "Correct answer" %}</th>
-            {% else %}
-                <th scope="col">{% trans "Feedback" %}</th>
             {% endif %}
+            <th scope="col">{% trans "Feedback" %}</th>
         </tr></thead>
         <tbody>
         {% for row in page %}
             <tr>
-                <td>{{ row.quiz.student.name|default:"—" }}</td>
+                <td><a href="{% url 'admin:quiz_quizlink_results' row.quiz_id %}">{{ row.quiz.student.name|default:"—" }}</a></td>
                 <td>{{ row.quiz.title|default:"—" }}</td>
                 <td><a href="{% url 'admin:quiz_quizlink_results' row.quiz_id %}?focus={{ row.pk }}#question-{{ row.pk }}">{{ row.order }}. {{ row.question.question|linebreaksbr }}</a></td>
                 {% if kind == 'incorrect' %}
                     <td>{{ row.selected_answer|linebreaksbr }}</td>
                     <td>{{ row.correct_answer|linebreaksbr }}</td>
-                {% else %}
-                    <td>{{ row.disabled_comment|linebreaksbr }}</td>
                 {% endif %}
+                <td>{{ row.disabled_comment|default:"—"|linebreaksbr }}</td>
             </tr>
         {% empty %}
-            <tr><td colspan="5">{% trans "No matching questions." %}</td></tr>
+            <tr><td colspan="{% if kind == 'incorrect' %}6{% else %}4{% endif %}">{% trans "No matching questions." %}</td></tr>
         {% endfor %}
         </tbody>
     </table>

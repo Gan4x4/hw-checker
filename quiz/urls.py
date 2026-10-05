@@ -5,6 +5,7 @@ from . import views
 app_name = "quiz"
 
 urlpatterns = [
+    path("test-results/<uuid:token>/results.csv", views.test_results_csv, name="test_results_csv"),
     path(
         "quiz/<uuid:token>/feedback/<int:quiz_question_id>/",
         views.QuizQuestionFeedbackView.as_view(),

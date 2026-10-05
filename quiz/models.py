@@ -303,6 +303,13 @@ class QuizLink(models.Model):
             queryset = queryset[:limit]
         return queryset.count()
 
+    def result_score(self) -> tuple[int, int]:
+        questions = [row for row in self.included_quiz_questions() if not row.is_disabled]
+        latest = dict(self.attempts.filter(
+            question_id__in=[row.question_id for row in questions],
+        ).order_by("created_at", "pk").values_list("question_id", "is_correct"))
+        return sum(latest.get(row.question_id, False) for row in questions), len(questions)
+
     @staticmethod
     def _question_limit() -> int | None:
         limit = getattr(settings, "QUIZ_MAX_QUESTIONS", None)
@@ -371,6 +378,7 @@ class TestState(models.TextChoices):
 
 
 class Test(models.Model):
+    results_token = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     academic_year = models.CharField(max_length=7, default=default_academic_year, validators=[academic_year_validator], db_index=True)
     title = models.CharField(max_length=255, blank=True)
     duration = models.DurationField(help_text=_("Total time the test stays active."))
