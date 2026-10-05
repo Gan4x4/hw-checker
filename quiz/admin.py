@@ -10,9 +10,10 @@ from threading import local
 from django.conf import settings
 from django.contrib import admin, messages
 from django.contrib.admin.helpers import ACTION_CHECKBOX_NAME
-from django.core.exceptions import ValidationError
-from django.db.models import Count, Q, F, Prefetch
-from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseRedirect
+from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.paginator import Paginator
+from django.db.models import Count, Q, F, OuterRef, Prefetch, Subquery
+from django.http import Http404, HttpResponse, HttpResponseBadRequest, HttpResponseRedirect
 from django.shortcuts import redirect
 from django.template.response import TemplateResponse
 from django.urls import path, reverse
@@ -1146,8 +1147,49 @@ class TestAdmin(admin.ModelAdmin):
                 self.admin_site.admin_view(self.view_view),
                 name="quiz_test_view",
             ),
+            path(
+                "<int:object_id>/summary/<str:kind>/",
+                self.admin_site.admin_view(self.summary_view),
+                name="quiz_test_summary",
+            ),
         ]
         return custom_urls + urls
+
+    def summary_view(self, request, object_id, kind):
+        if kind not in ("incorrect", "feedback"):
+            raise Http404
+        test = self.get_object(request, object_id)
+        if test is None:
+            raise Http404
+        model = Attempt if kind == "incorrect" else QuizQuestionFeedback
+        if not self.has_view_or_change_permission(request, test) or not self.admin_site._registry[model].has_view_or_change_permission(request):
+            raise PermissionDenied
+
+        questions = QuizQuestion.objects.filter(quiz__test=test, is_disabled=False).select_related("quiz__student", "question")
+        if kind == "incorrect":
+            latest = Attempt.objects.filter(quiz_id=OuterRef("quiz_id"), question_id=OuterRef("question_id")).order_by("-created_at", "-pk")
+            questions = questions.annotate(
+                latest_correct=Subquery(latest.values("is_correct")[:1]),
+                selected_index=Subquery(latest.values("selected_answer_index")[:1]),
+            ).filter(latest_correct=False)
+        else:
+            questions = questions.exclude(disabled_comment="")
+
+        page = Paginator(questions.order_by("quiz__student__name", "quiz_id", "order", "pk"), 100).get_page(request.GET.get("page"))
+        if kind == "incorrect":
+            for row in page:
+                answers = row.question.answers or []
+                row.selected_answer = answers[row.selected_index] if row.selected_index is not None and 0 <= row.selected_index < len(answers) else _("No answer")
+                index = row.question.correct_answer_index
+                row.correct_answer = answers[index] if 0 <= index < len(answers) else "—"
+        return TemplateResponse(request, "admin/quiz/test/summary.html", {
+            **self.admin_site.each_context(request),
+            "opts": self.model._meta,
+            "test": test,
+            "title": _("Incorrect answers") if kind == "incorrect" else _("Questions with feedback"),
+            "kind": kind,
+            "page": page,
+        })
 
     def get_queryset(self, request):
         queryset = super().get_queryset(request)

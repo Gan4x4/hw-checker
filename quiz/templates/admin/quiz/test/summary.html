@@ -1,0 +1,55 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">{% trans "Home" %}</a>
+    &rsaquo; <a href="{% url 'admin:quiz_test_changelist' %}">{% trans "Tests" %}</a>
+    &rsaquo; <a href="{% url 'admin:quiz_test_view' test.pk %}">{{ test.title }}</a>
+    &rsaquo; {{ title }}
+</div>
+{% endblock %}
+
+{% block content %}
+<p>{{ test.title }} · {{ test.academic_year }} · {{ page.paginator.count }} {% trans "questions" %}</p>
+<p><a href="{% url 'admin:quiz_test_view' test.pk %}">{% trans "Back to test" %}</a></p>
+<div class="module" style="overflow-x: auto;">
+    <table style="width: 100%;">
+        <thead><tr>
+            <th scope="col">{% trans "Student" %}</th>
+            <th scope="col">{% trans "Quiz" %}</th>
+            <th scope="col">{% trans "Question" %}</th>
+            {% if kind == 'incorrect' %}
+                <th scope="col">{% trans "Selected answer" %}</th>
+                <th scope="col">{% trans "Correct answer" %}</th>
+            {% else %}
+                <th scope="col">{% trans "Feedback" %}</th>
+            {% endif %}
+        </tr></thead>
+        <tbody>
+        {% for row in page %}
+            <tr>
+                <td>{{ row.quiz.student.name|default:"—" }}</td>
+                <td>{{ row.quiz.title|default:"—" }}</td>
+                <td><a href="{% url 'admin:quiz_quizlink_results' row.quiz_id %}?focus={{ row.pk }}#question-{{ row.pk }}">{{ row.order }}. {{ row.question.question|linebreaksbr }}</a></td>
+                {% if kind == 'incorrect' %}
+                    <td>{{ row.selected_answer|linebreaksbr }}</td>
+                    <td>{{ row.correct_answer|linebreaksbr }}</td>
+                {% else %}
+                    <td>{{ row.disabled_comment|linebreaksbr }}</td>
+                {% endif %}
+            </tr>
+        {% empty %}
+            <tr><td colspan="5">{% trans "No matching questions." %}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% if page.has_other_pages %}
+<nav aria-label="{% trans 'Pagination' %}">
+    {% if page.has_previous %}<a href="?page={{ page.previous_page_number }}">{% trans "Previous" %}</a>{% endif %}
+    {{ page.number }} / {{ page.paginator.num_pages }}
+    {% if page.has_next %}<a href="?page={{ page.next_page_number }}">{% trans "Next" %}</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock %}

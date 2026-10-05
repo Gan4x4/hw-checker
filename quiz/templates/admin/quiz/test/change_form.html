@@ -86,6 +86,14 @@
 {% block after_field_sets %}
     {{ block.super }}
     {% if original %}
+        <p style="display: flex; flex-wrap: wrap; gap: 0.75rem;">
+            {% if perms.quiz.view_attempt or perms.quiz.change_attempt %}
+                <a class="button" href="{% url 'admin:quiz_test_summary' original.pk 'incorrect' %}">{% trans "Incorrect answers" %}</a>
+            {% endif %}
+            {% if perms.quiz.view_quizquestionfeedback or perms.quiz.change_quizquestionfeedback %}
+                <a class="button" href="{% url 'admin:quiz_test_summary' original.pk 'feedback' %}">{% trans "Questions with feedback" %}</a>
+            {% endif %}
+        </p>
         <div class="inline-group" style="margin-top: 1rem;">
             <fieldset class="module">
                 <h2>{% trans "Quizzes" %}</h2>
