@@ -508,6 +508,18 @@ class Test(models.Model):
         return parsed
 
 
+class APIClient(models.Model):
+    name = models.CharField(max_length=255, unique=True)
+    token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name = "API client"
+
+    def __str__(self):
+        return self.name
+
+
 class QuizQuestion(models.Model):
     shown_snapshot = models.JSONField(null=True, blank=True, editable=False)
     quiz = models.ForeignKey(QuizLink, related_name="quiz_questions", on_delete=models.CASCADE)

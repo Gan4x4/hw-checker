@@ -1,6 +1,7 @@
 import csv
 import json
 import re
+import uuid
 from collections import defaultdict
 
 from datetime import timedelta
@@ -24,7 +25,7 @@ from django.utils.translation import gettext_lazy as _
 
 from .forms import QuizImportForm, StudentImportForm, TestAdminForm, TestCreationForm
 from .management.commands.import_questions import QuizImportError, import_quiz_from_json, _short_title_from_filename
-from .models import Attempt, Question, QuizLink, QuizQuestion, QuizQuestionFeedback, Student, Test, TestState, default_academic_year
+from .models import APIClient, Attempt, Question, QuizLink, QuizQuestion, QuizQuestionFeedback, Student, Test, TestState, default_academic_year
 from .utils import (
     import_students_from_content,
     wrap_code_snippet,
@@ -33,6 +34,31 @@ from .utils import (
 
 
 _thread_locals = local()
+
+
+@admin.register(APIClient)
+class APIClientAdmin(admin.ModelAdmin):
+    list_display = ("name", "is_active")
+    fields = ("name", "token", "is_active")
+    readonly_fields = ("token",)
+    actions = ("rotate_tokens",)
+
+    def has_module_permission(self, request):
+        return request.user.is_superuser
+
+    def has_view_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+    has_add_permission = has_view_permission
+    has_change_permission = has_view_permission
+    has_delete_permission = has_view_permission
+
+    @admin.action(description="Rotate tokens (invalidate the selected clients' old tokens)")
+    def rotate_tokens(self, request, queryset):
+        for client in queryset:
+            client.token = uuid.uuid4()
+            client.save(update_fields=["token"])
+        self.message_user(request, "Tokens rotated. Copy the new token from each client's page.")
 
 
 def _current_request():

@@ -26,7 +26,10 @@ class HomeView(TemplateView):
 
 @require_safe
 def test_results_csv(request, token):
-    test = get_object_or_404(Test, results_token=token)
+    return results_csv_response(get_object_or_404(Test, results_token=token))
+
+
+def results_csv_response(test):
     response = HttpResponse(content_type="text/csv; charset=utf-8")
     response["Content-Disposition"] = f'attachment; filename="test-{test.pk}-results.csv"'
     response["X-Robots-Tag"] = "noindex, nofollow, noarchive"
@@ -52,6 +55,15 @@ def test_results_csv(request, token):
 @require_safe
 def test_feedback_json(request, token):
     test = get_object_or_404(Test, results_token=token)
+    response = JsonResponse(feedback_payload(test), json_dumps_params={"ensure_ascii": False, "indent": 2})
+    response["Content-Disposition"] = f'attachment; filename="test-{test.pk}-feedback.json"'
+    response["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+    response["Cache-Control"] = "private, no-store"
+    response["Referrer-Policy"] = "no-referrer"
+    return response
+
+
+def feedback_payload(test):
     payload = {"schema_version": 1, "test_id": test.pk, "questions": {}, "feedback": [], "general_feedback": []}
     references = {}
     for entry in Feedback.objects.filter(quiz__test=test).iterator():
@@ -71,12 +83,7 @@ def test_feedback_json(request, token):
             }
         item["question_ref"] = references[signature]
         payload["feedback"].append(item)
-    response = JsonResponse(payload, json_dumps_params={"ensure_ascii": False, "indent": 2})
-    response["Content-Disposition"] = f'attachment; filename="test-{test.pk}-feedback.json"'
-    response["X-Robots-Tag"] = "noindex, nofollow, noarchive"
-    response["Cache-Control"] = "private, no-store"
-    response["Referrer-Policy"] = "no-referrer"
-    return response
+    return payload
 
 
 class QuizSessionView(View):
