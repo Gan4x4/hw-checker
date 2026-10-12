@@ -98,6 +98,7 @@ class TestSummaryTests(TestCase):
         url = reverse("quiz:test_results_csv", args=[self.test.results_token])
         view = self.client.get(reverse("admin:quiz_test_view", args=[self.test.pk]))
         self.assertContains(view, "http://testserver" + url)
+        self.assertContains(view, reverse("quiz:test_feedback_json", args=[self.test.results_token]))
         self.client.logout()
         response = self.client.get(url)
         self.assertEqual(response.status_code, 200)

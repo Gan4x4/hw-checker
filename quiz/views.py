@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import csv
+import json
 import random
 from datetime import datetime
 from pathlib import Path
 from typing import List
 
 from django.conf import settings
+from django.db import transaction
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -14,7 +16,7 @@ from django.views.generic import TemplateView, View
 from django.views.decorators.http import require_safe
 from django.utils import timezone
 
-from .models import Attempt, QuizLink, Test, TestState
+from .models import PROVENANCE_FIELDS, Attempt, Feedback, QuizLink, Test, TestState
 from .utils import wrap_code_snippet, wrap_text_html
 
 
@@ -44,6 +46,36 @@ def test_results_csv(request, token):
         if name.lstrip().startswith(("=", "+", "-", "@")) or name.startswith(("\t", "\r", "\n")):
             name = "'" + name
         writer.writerow([name, f"{correct / total * 100:.2f}" if total else ""])
+    return response
+
+
+@require_safe
+def test_feedback_json(request, token):
+    test = get_object_or_404(Test, results_token=token)
+    payload = {"schema_version": 1, "test_id": test.pk, "questions": {}, "feedback": [], "general_feedback": []}
+    references = {}
+    for entry in Feedback.objects.filter(quiz__test=test).iterator():
+        item = {"id": entry.pk, "text": entry.comment, "submitted_at": entry.submitted_at,
+                "rating": None, "category": None, "question_ref": None}
+        snapshot = entry.question_snapshot
+        if snapshot is None:
+            payload["general_feedback"].append(item)
+            continue
+        signature = json.dumps(snapshot, sort_keys=True)
+        if signature not in references:
+            reference = f"q{snapshot['question_id']}-v{entry.pk}"
+            references[signature] = reference
+            payload["questions"][reference] = {
+                **snapshot,
+                "provenance": {key: snapshot.get("provenance", {}).get(key) for key in PROVENANCE_FIELDS},
+            }
+        item["question_ref"] = references[signature]
+        payload["feedback"].append(item)
+    response = JsonResponse(payload, json_dumps_params={"ensure_ascii": False, "indent": 2})
+    response["Content-Disposition"] = f'attachment; filename="test-{test.pk}-feedback.json"'
+    response["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+    response["Cache-Control"] = "private, no-store"
+    response["Referrer-Policy"] = "no-referrer"
     return response
 
 
@@ -135,6 +167,9 @@ class QuizSessionView(View):
         remaining_seconds = max(0, int(timeout_seconds - elapsed_seconds))
         answers = list(enumerate(question.answers))
         random.shuffle(answers)
+        current_quiz_question.shown_snapshot = question.feedback_snapshot("shown")
+        current_quiz_question.shown_snapshot["answer_order"] = [index for index, _ in answers]
+        current_quiz_question.save(update_fields=["shown_snapshot"])
 
         context = {
             "quiz": quiz,
@@ -501,21 +536,20 @@ class QuizSessionView(View):
 
 
 class QuizQuestionFeedbackView(View):
-    """Allow participants to submit optional per-question feedback once finished."""
+    """Store feedback history, including unfinished quizzes and general comments."""
 
     max_comment_length = 2000
 
-    def post(self, request, token, quiz_question_id, *args, **kwargs):
+    @transaction.atomic
+    def post(self, request, token, quiz_question_id=None, *args, **kwargs):
         quiz = get_object_or_404(QuizLink, token=token)
-        if quiz.completed_at is None:
-            return HttpResponseBadRequest("Quiz not completed")
 
         quiz_question = (
-            quiz.quiz_questions.select_related("question")
+            quiz.quiz_questions.select_for_update().select_related("question")
             .filter(pk=quiz_question_id, is_disabled=False)
             .first()
         )
-        if not quiz_question:
+        if quiz_question_id is not None and not quiz_question:
             return HttpResponseBadRequest("Question not available")
 
         raw_comment = (request.POST.get("comment") or "").strip()
@@ -523,6 +557,14 @@ class QuizQuestionFeedbackView(View):
         if len(comment) > self.max_comment_length:
             comment = comment[: self.max_comment_length]
         was_trimmed = len(raw_comment) > len(comment)
+
+        if comment:
+            Feedback.objects.create(
+                quiz=quiz, comment=comment,
+                question_snapshot=(quiz_question.shown_snapshot or quiz_question.question.feedback_snapshot()) if quiz_question else None,
+            )
+        if quiz_question is None:
+            return JsonResponse({"comment": comment, "has_feedback": bool(comment), "was_trimmed": was_trimmed})
 
         update_fields: list[str] = []
         if comment and quiz_question.disabled_comment != comment:

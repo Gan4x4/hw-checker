@@ -17,6 +17,11 @@ from PIL import Image, ImageDraw, ImageFont
 
 from .utils import wrap_code_snippet, wrap_text_to_lines
 
+PROVENANCE_FIELDS = (
+    "generation_run_id", "assignment_id", "analyzer_model_version",
+    "questioner_model_version", "prompt_versions", "prompt_hashes", "original_question_ref",
+)
+
 academic_year_validator = RegexValidator(r"\A[0-9]{4}_[0-9]{2}\Z", "Use YYYY_YY, for example 2026_27.")
 
 
@@ -77,6 +82,7 @@ class Student(models.Model):
 
 
 class Question(models.Model):
+    provenance = models.JSONField(default=dict, blank=True)
     code_snippet = models.TextField(blank=True)
     question = models.TextField()
     answers = models.JSONField(default=_answers_default)
@@ -89,6 +95,16 @@ class Question(models.Model):
 
     class Meta:
         ordering = ["id"]
+
+    def feedback_snapshot(self, source="current"):
+        return {
+            "question_id": self.pk, "question": self.question,
+            "code_snippet": self.code_snippet, "answers": self.answers,
+            "correct_answer_index": self.correct_answer_index,
+            "correct_answer": self.answers[self.correct_answer_index] if 0 <= self.correct_answer_index < len(self.answers) else None,
+            "explanation": self.explanation, "provenance": self.provenance,
+            "snapshot_source": source,
+        }
 
     def __str__(self) -> str:  # pragma: no cover - admin display helper
         return textwrap.shorten(self.question, width=60) if self.question else "Question"
@@ -493,6 +509,7 @@ class Test(models.Model):
 
 
 class QuizQuestion(models.Model):
+    shown_snapshot = models.JSONField(null=True, blank=True, editable=False)
     quiz = models.ForeignKey(QuizLink, related_name="quiz_questions", on_delete=models.CASCADE)
     question = models.ForeignKey(Question, on_delete=models.CASCADE)
     order = models.PositiveIntegerField()
@@ -512,6 +529,16 @@ class QuizQuestionFeedback(QuizQuestion):
         proxy = True
         verbose_name = _("Feedback")
         verbose_name_plural = _("Feedback")
+
+
+class Feedback(models.Model):
+    quiz = models.ForeignKey(QuizLink, related_name="feedback_entries", on_delete=models.CASCADE)
+    question_snapshot = models.JSONField(null=True, blank=True)
+    comment = models.TextField()
+    submitted_at = models.DateTimeField(default=timezone.now, null=True)
+
+    class Meta:
+        ordering = ["pk"]
 
 
 class Attempt(models.Model):

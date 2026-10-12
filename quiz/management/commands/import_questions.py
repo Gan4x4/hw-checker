@@ -9,11 +9,25 @@ from django.core.management.base import BaseCommand, CommandError
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
-from quiz.models import Question, QuizLink, QuizQuestion, default_academic_year
+from quiz.models import PROVENANCE_FIELDS, Question, QuizLink, QuizQuestion, default_academic_year
 
 
 class QuizImportError(Exception):
     """Raised when a quiz import payload is invalid."""
+
+
+def _provenance(data):
+    value = data.get("provenance", {})
+    if not isinstance(value, dict):
+        raise QuizImportError("'provenance' must be an object.")
+    result = {}
+    for key in PROVENANCE_FIELDS:
+        item = value.get(key, data.get(key))
+        if item is not None and not isinstance(item, (str, int, dict)):
+            raise QuizImportError(f"Invalid provenance field '{key}'.")
+        if item is not None:
+            result[key] = item
+    return result
 
 
 def _question_from_payload(data: Dict[str, Any], *, entry_index: int) -> Question:
@@ -81,6 +95,7 @@ def _question_from_payload(data: Dict[str, Any], *, entry_index: int) -> Questio
         raise QuizImportError(f"Entry #{entry_index} has a non-string 'source'.")
 
     return Question(
+        provenance=_provenance(data),
         code_snippet=data.get("code_snippet", ""),
         question=question_text.strip(),
         answers=cleaned_answers,
@@ -116,7 +131,9 @@ def _normalize_payload(payload: Any) -> tuple[str | None, str | None, List[Quest
 
     questions: List[Question] = []
     for index, item in enumerate(questions_data, start=1):
-        questions.append(_question_from_payload(item, entry_index=index))
+        question = _question_from_payload(item, entry_index=index)
+        question.provenance = {**(_provenance(payload) if isinstance(payload, dict) else {}), **question.provenance}
+        questions.append(question)
 
     if quiz_name and student_name:
         combined = f"{quiz_name} - {student_name}"

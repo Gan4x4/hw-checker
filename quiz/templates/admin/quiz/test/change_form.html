@@ -98,6 +98,7 @@
             <label for="results-export-url">{% trans "CSV results link" %}</label>
             <input id="results-export-url" type="url" readonly value="{{ results_export_url }}" style="width: min(100%, 55rem); box-sizing: border-box;">
             <a class="button" href="{{ results_export_url }}" rel="nofollow noreferrer">{% trans "Download CSV" %}</a>
+            <a class="button" href="{% url 'quiz:test_feedback_json' original.results_token %}" rel="nofollow noreferrer">{% trans "Download feedback JSON" %}</a>
             <p class="help">{% trans "Anyone with this link can download student names and current scores (%). Keep it private. Search engines are instructed not to index it." %}</p>
         </div>
         <div class="inline-group" style="margin-top: 1rem;">
