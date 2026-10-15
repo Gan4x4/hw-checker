@@ -371,9 +371,9 @@ class QuizQuestionInline(admin.TabularInline):
 @admin.register(QuizLink)
 class QuizLinkAdmin(admin.ModelAdmin):
     list_display = (
+        "student",
         "token",
         "title",
-        "student",
         "academic_year",
         "test_display",
         "created_at",
@@ -383,6 +383,7 @@ class QuizLinkAdmin(admin.ModelAdmin):
         "admin_actions",
     )
     list_filter = (AcademicYearFilter, "test", "student")
+    ordering = ("student__name", "student__email", "pk")
     inlines = [QuizQuestionInline]
     readonly_fields = ("token", "original_filename", "created_at", "completed_at")
     change_list_template = "admin/quiz/quizlink/change_list.html"
@@ -995,7 +996,7 @@ class QuizQuestionFeedbackAdmin(admin.ModelAdmin):
         "quiz__student__email",
         "disabled_comment",
     )
-    ordering = ("-quiz__completed_at", "-quiz__created_at", "order")
+    ordering = ("quiz__student__name", "quiz_id", "order", "pk")
     readonly_fields = ("quiz", "question", "order")
     fields = ("quiz", "question", "order", "disabled_comment")
 
@@ -1528,6 +1529,7 @@ class AttemptAdmin(admin.ModelAdmin):
     list_display = ("quiz", "question", "selected_answer_index", "is_correct", "time_spent", "created_at")
     academic_year_lookup = "quiz__academic_year"
     list_filter = (AcademicYearFilter, "quiz", "is_correct")
+    ordering = ("quiz__student__name", "quiz_id", "created_at", "pk")
     search_fields = ("question__question",)
     readonly_fields = ("quiz", "question", "selected_answer_index", "is_correct", "time_spent", "created_at")
 

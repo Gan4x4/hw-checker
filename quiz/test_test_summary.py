@@ -28,6 +28,43 @@ class TestSummaryTests(TestCase):
     def url(self, kind):
         return reverse("admin:quiz_test_summary", args=[self.test.pk, kind])
 
+    def test_student_tables_and_exports_use_surname_order(self):
+        self.quiz.delete()
+        self.quiz.student.delete()
+        quizzes, questions = [], []
+        # FIO imports store surname first; insertion and given-name order differ.
+        for index, name in enumerate(("Яковлев Андрей", "Белов Яков", "Белов Андрей")):
+            student = Student.objects.create(name=name, email=f"student{index}@example.com", academic_year=self.test.academic_year)
+            quiz = QuizLink.objects.create(test=self.test, student=student, academic_year=self.test.academic_year)
+            question = Question.objects.create(question="Q?", answers=["Right", "Wrong"], correct_answer_index=0)
+            questions.append(QuizQuestion.objects.create(quiz=quiz, question=question, order=1, disabled_comment="Feedback"))
+            Attempt.objects.create(quiz=quiz, question=question, selected_answer_index=1)
+            quizzes.append(quiz)
+        expected = [quizzes[2], quizzes[1], quizzes[0]]
+        names = [quiz.student.name for quiz in expected]
+        for model, field in (("student", "name"), ("quizlink", "student__name"),
+                             ("quizquestionfeedback", "quiz__student__name"), ("attempt", "quiz__student__name")):
+            with self.subTest(table=model):
+                response = self.client.get(reverse(f"admin:quiz_{model}_changelist"), {"academic_year": "all"})
+                self.assertEqual(list(response.context["cl"].queryset.values_list(field, flat=True)), names)
+        for route in ("quiz_test_view", "quiz_test_change"):
+            with self.subTest(table=route):
+                response = self.client.get(reverse(f"admin:{route}", args=[self.test.pk]))
+                self.assertEqual(response.context["quizzes"], expected)
+                self.assertRegex(response.content.decode(), r'<thead>\s*<tr>\s*<th scope="col">Student</th>')
+                self.assertContains(response, f'<th scope="row"><a href="{reverse("admin:quiz_quizlink_results", args=[expected[0].pk])}">{expected[0].student}</a></th>', html=True)
+        response = self.client.get(reverse("admin:quiz_quizlink_changelist"), {"academic_year": "all"})
+        self.assertEqual(response.context["cl"].list_display[1], "student")  # After the action checkbox.
+        for kind in ("incorrect", "feedback"):
+            response = self.client.get(self.url(kind))
+            self.assertEqual([row.pk for row in response.context["page"]], [questions[i].pk for i in (2, 1, 0)])
+        for response in (
+            self.client.get(reverse("quiz:test_results_csv", args=[self.test.results_token])),
+            self.client.post(reverse("admin:quiz_test_change", args=[self.test.pk]), {"_export_links": "1"}),
+        ):
+            rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig"))))
+            self.assertEqual([row[0] for row in rows[1:]], names)
+
     def test_incorrect_summary_uses_latest_attempt_and_only_this_test(self):
         wrong = self.question("Wrong question", disabled_comment="Please clarify this answer")
         timeout = self.question("Timed out")

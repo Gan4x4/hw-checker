@@ -3,9 +3,9 @@
     <table id="result_list">
         <thead>
             <tr>
+                <th scope="col">{% trans "Student" %}</th>
                 <th scope="col">{% trans "Token" %}</th>
                 <th scope="col">{% trans "Title" %}</th>
-                <th scope="col">{% trans "Student" %}</th>
                 <th scope="col">{% trans "Test" %}</th>
                 <th scope="col">{% trans "Created at" %}</th>
                 <th scope="col">{% trans "Completed at" %}</th>
@@ -17,11 +17,11 @@
         <tbody>
             {% for quiz in quizzes %}
                 <tr class="{% cycle 'row1' 'row2' %}">
-                    <th scope="row">{{ quiz.token }}</th>
+                    <th scope="row"><a href="{% url 'admin:quiz_quizlink_results' quiz.pk %}">{{ quiz.student|default:"—" }}</a></th>
+                    <td>{{ quiz.token }}</td>
                     <td>
                         <a href="{% url 'admin:quiz_quizlink_change' quiz.pk %}">{{ quiz.title|default:quiz.token }}</a>
                     </td>
-                    <td><a href="{% url 'admin:quiz_quizlink_results' quiz.pk %}">{{ quiz.student|default:"—" }}</a></td>
                     <td>{{ quiz.test|default:"—" }}</td>
                     <td>{{ quiz.created_at }}</td>
                     <td>{{ quiz.completed_at|default:"—" }}</td>
