@@ -28,11 +28,14 @@ The response contains:
   `provenance`, and `snapshot_source`. Snapshots captured during display also
   include `answer_order`, the shuffled display order as indexes into `answers`.
 - `feedback`: submitted question comments, each with `id`, `text`, `submitted_at`
-  (ISO 8601), `question_ref` (a key in `questions`), `rating`, and `category`.
+  (ISO 8601), `student_id`, `student_name`, `question_ref` (a key in `questions`),
+  `rating`, and `category`.
 - `general_feedback`: the same comment fields with `question_ref: null`.
 
-No student names, emails, quiz titles, or student access tokens are added to the
-export. Comment text is preserved, so it can contain information written by the
+`student_id` is the linked student's database ID and `student_name` is their
+current name. Both are `null` when no student is linked to the quiz.
+No emails, quiz titles, or student access tokens are added to the export.
+Comment text is preserved, so it can contain information written by the
 participant. Rating and category are `null` because the service does not collect
 them. An empty test returns `questions: {}`, `feedback: []`, and
 `general_feedback: []`. Completion is not required; multiple submissions are

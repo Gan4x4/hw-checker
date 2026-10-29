@@ -60,12 +60,13 @@ curl --fail --show-error -H "Authorization: Bearer $QUIZ_API_TOKEN" \
 ## Feedback and scores
 
 Each feedback document contains `schema_version: 1`, `test_id`, `questions`,
-`feedback`, and `general_feedback`. Empty collections are explicit. Student
-identities are omitted from the feedback schema, though free-text comments may
-contain identifying information. Do not redistribute such details unnecessarily.
+`feedback`, and `general_feedback`. Empty collections are explicit. Each comment
+includes `student_id` (the linked student's database ID) and `student_name`
+(their current name); both are null when no student is linked to the quiz.
+Do not redistribute identifying details unnecessarily.
 
-Question comments contain `id`, `text`, `submitted_at`, `question_ref`, `rating`,
-and `category`. General comments have `question_ref: null`. Rating/category are
+Question comments contain `id`, `text`, `submitted_at`, `student_id`, `student_name`,
+`question_ref`, `rating`, and `category`. General comments have `question_ref: null`. Rating/category are
 currently null. Multiple submissions are retained; they are not distinct voters.
 Feedback from unfinished quizzes is included.
 

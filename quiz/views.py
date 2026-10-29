@@ -66,8 +66,10 @@ def test_feedback_json(request, token):
 def feedback_payload(test):
     payload = {"schema_version": 1, "test_id": test.pk, "questions": {}, "feedback": [], "general_feedback": []}
     references = {}
-    for entry in Feedback.objects.filter(quiz__test=test).iterator():
+    for entry in Feedback.objects.filter(quiz__test=test).select_related("quiz__student").iterator():
         item = {"id": entry.pk, "text": entry.comment, "submitted_at": entry.submitted_at,
+                "student_id": entry.quiz.student_id,
+                "student_name": entry.quiz.student.name if entry.quiz.student_id is not None else None,
                 "rating": None, "category": None, "question_ref": None}
         snapshot = entry.question_snapshot
         if snapshot is None:

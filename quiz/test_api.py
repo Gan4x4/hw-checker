@@ -6,7 +6,7 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from .models import APIClient, Feedback, QuizLink, Test
+from .models import APIClient, Feedback, QuizLink, Student, Test
 
 
 class ClientAPITests(TestCase):
@@ -37,6 +37,25 @@ class ClientAPITests(TestCase):
         batch = self.client.get(reverse("quiz:api_feedback")).json()
         self.assertEqual(batch["tests"][0], legacy.json())
         self.assertEqual([test["test_id"] for test in batch["tests"]], [self.old.pk, self.new.pk])
+
+    def test_feedback_student_identity(self):
+        student = Student.objects.create(name="Иван Петров", email="ivan@example.com", academic_year="2025_26")
+        quiz = self.old.quizzes.get()
+        Feedback.objects.create(quiz=quiz, comment="Question comment", question_snapshot={"question_id": 1})
+        for linked_student in (student, None):
+            quiz.student = linked_student
+            quiz.save(update_fields=["student"])
+            expected = (student.pk, student.name) if linked_student else (None, None)
+            for route, args in (("api_test_feedback", [self.old.pk]), ("api_feedback", []),
+                                ("test_feedback_json", [self.old.results_token])):
+                with self.subTest(student=linked_student, route=route):
+                    payload = self.client.get(reverse("quiz:" + route, args=args)).json()
+                    if route == "api_feedback":
+                        payload = payload["tests"][0]
+                    for kind in ("feedback", "general_feedback"):
+                        self.assertEqual(len(payload[kind]), 1)
+                        entry = payload[kind][0]
+                        self.assertEqual((entry["student_id"], entry["student_name"]), expected)
 
     def test_all_tests_future_tests_selection_and_read_only_state(self):
         future = Test.objects.create(duration=timedelta(minutes=5), state="active", finished_at=timezone.now() - timedelta(seconds=1))
