@@ -137,7 +137,7 @@ DEFAULT_ACADEMIC_YEAR = os.environ.get("DEFAULT_ACADEMIC_YEAR", "2026_27")
 QUIZ_MAX_QUESTIONS = _int_setting("QUIZ_MAX_QUESTIONS", 7, min_value=1)
 QUIZ_IMAGE_WRAP_WIDTH = _int_setting("QUIZ_IMAGE_WRAP_WIDTH", 79, min_value=1)  # PEP8
 QUIZ_IMAGE_MAX_PIXEL_WIDTH = _int_setting("QUIZ_IMAGE_MAX_PIXEL_WIDTH", 900, min_value=1)
-QUIZ_QUESTION_TIMEOUT = _int_setting("QUIZ_QUESTION_TIMEOUT", 60, min_value=1)
+QUIZ_QUESTION_TIMEOUT = _int_setting("QUIZ_QUESTION_TIMEOUT", 45, min_value=1)
 QUIZ_TITLE_MAX_LENGTH = _int_setting("QUIZ_TITLE_MAX_LENGTH", 30, min_value=1)
 
 # Default primary key field type

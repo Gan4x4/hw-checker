@@ -3,6 +3,7 @@
     <table id="result_list">
         <thead>
             <tr>
+                {% if action_form %}<th scope="col" class="action-checkbox-column"><input type="checkbox" id="action-toggle" aria-label="{% trans 'Select all quizzes' %}"></th>{% endif %}
                 <th scope="col">{% trans "Student" %}</th>
                 <th scope="col">{% trans "Token" %}</th>
                 <th scope="col">{% trans "Title" %}</th>
@@ -17,6 +18,7 @@
         <tbody>
             {% for quiz in quizzes %}
                 <tr class="{% cycle 'row1' 'row2' %}">
+                    {% if action_form %}<td class="action-checkbox"><input type="checkbox" name="_selected_action" value="{{ quiz.pk }}" class="action-select" aria-label="{% blocktrans with title=quiz.title|default:quiz.token %}Select quiz {{ title }}{% endblocktrans %}"></td>{% endif %}
                     <th scope="row"><a href="{% url 'admin:quiz_quizlink_results' quiz.pk %}">{{ quiz.student|default:"—" }}</a></th>
                     <td>{{ quiz.token }}</td>
                     <td>
@@ -31,7 +33,7 @@
                 </tr>
             {% empty %}
                 <tr class="row1">
-                    <td colspan="9" style="text-align:center;">{% trans "No quizzes found." %}</td>
+                    <td colspan="{% if action_form %}10{% else %}9{% endif %}" style="text-align:center;">{% trans "No quizzes found." %}</td>
                 </tr>
             {% endfor %}
         </tbody>

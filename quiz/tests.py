@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from django.contrib.admin.sites import AdminSite
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Permission
 from django.contrib.messages.storage.fallback import FallbackStorage
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
@@ -19,7 +20,7 @@ from django.utils import timezone
 
 from .admin import QuizLinkAdmin, StudentAdmin, TestAdmin
 from .management.commands.import_questions import import_quiz_from_json
-from .models import Attempt, Question, QuizLink, QuizQuestion, Student, Test, TestState
+from .models import Attempt, Feedback, Question, QuizLink, QuizQuestion, Student, Test, TestState
 from .templatetags.quiz_extras import wrap_long_lines
 from .utils import wrap_code_snippet, wrap_text, wrap_text_html, wrap_text_to_lines
 from .views import QuizQuestionFeedbackView, QuizSessionView
@@ -533,6 +534,93 @@ class TestAdminStartTests(TestCase):
         self.quiz.test = self.test
         self.quiz.student = self.student
         self.quiz.save(update_fields=["test", "student"])
+
+    def test_delete_selected_test_cascades_to_quiz(self):
+        self.client.force_login(self.superuser)
+        Attempt.objects.create(quiz=self.quiz, question=self.question)
+        Feedback.objects.create(quiz=self.quiz, comment="Feedback")
+        other = QuizLink.objects.create(title="Keep")
+        url = reverse("admin:quiz_test_changelist")
+        data = {"action": "delete_selected", "_selected_action": [self.test.pk]}
+        self.assertEqual(self.client.post(url, data).status_code, 200)
+        self.assertEqual(self.client.post(url, {**data, "post": "yes"}).status_code, 302)
+        self.assertFalse(Test.objects.filter(pk=self.test.pk).exists())
+        self.assertFalse(QuizLink.objects.filter(pk=self.quiz.pk).exists())
+        self.assertFalse(QuizQuestion.objects.filter(quiz_id=self.quiz.pk).exists())
+        self.assertFalse(Attempt.objects.filter(quiz_id=self.quiz.pk).exists())
+        self.assertFalse(Feedback.objects.filter(quiz_id=self.quiz.pk).exists())
+        self.assertTrue(QuizLink.objects.filter(pk=other.pk).exists())
+        self.assertTrue(Question.objects.filter(pk=self.question.pk).exists())
+
+    def test_delete_single_test_cascades_to_quiz(self):
+        self.client.force_login(self.superuser)
+        url = reverse("admin:quiz_test_delete", args=[self.test.pk])
+        self.assertEqual(self.client.get(url).status_code, 200)
+        self.assertEqual(self.client.post(url, {"post": "yes"}).status_code, 302)
+        self.assertFalse(Test.objects.filter(pk=self.test.pk).exists())
+        self.assertFalse(QuizLink.objects.filter(pk=self.quiz.pk).exists())
+
+    def test_delete_selected_quizzes_from_test_edit(self):
+        self.client.force_login(self.superuser)
+        keep = QuizLink.objects.create(test=self.test, title="Unselected")
+        outside = QuizLink.objects.create(title="Outside this test")
+        url = reverse("admin:quiz_test_change", args=[self.test.pk])
+        response = self.client.get(url)
+        self.assertContains(response, 'id="action-toggle"')
+        self.assertContains(response, 'name="action"')
+        self.assertContains(response, 'name="_selected_action"', count=2)
+        self.assertContains(response, '/static/admin/js/actions.js', count=1)
+        data = {"action": "delete_selected", "_selected_action": [self.quiz.pk, outside.pk]}
+        response = self.client.post(url, {**data, "index": "0"})
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "admin/delete_selected_confirmation.html")
+        self.assertEqual(list(response.context["queryset"]), [self.quiz])
+        self.assertTrue(QuizLink.objects.filter(pk=self.quiz.pk).exists())
+        self.assertRedirects(self.client.post(url, {**data, "post": "yes"}), url)
+        self.assertFalse(QuizLink.objects.filter(pk=self.quiz.pk).exists())
+        self.assertTrue(QuizLink.objects.filter(pk=keep.pk).exists())
+        self.assertTrue(QuizLink.objects.filter(pk=outside.pk).exists())
+        self.assertTrue(Test.objects.filter(pk=self.test.pk).exists())
+
+    def test_quiz_actions_require_permissions_and_selection(self):
+        url = reverse("admin:quiz_test_change", args=[self.test.pk])
+        self.client.force_login(self.superuser)
+        self.assertRedirects(self.client.post(url, {"action": "delete_selected", "index": "0"}), url)
+        self.assertTrue(QuizLink.objects.filter(pk=self.quiz.pk).exists())
+        self.assertEqual(self.client.post(url, {
+            "action": ["make_test_action", "delete_selected"], "index": "0",
+            "_selected_action": [self.quiz.pk],
+        }).status_code, 400)
+        response = self.client.get(reverse("admin:quiz_test_view", args=[self.test.pk]))
+        self.assertNotContains(response, 'id="action-toggle"')
+        user = get_user_model().objects.create_user("editor", is_staff=True)
+        user.user_permissions.add(Permission.objects.get(codename="change_test"))
+        self.client.force_login(user)
+        self.assertNotContains(self.client.get(url), 'id="action-toggle"')
+        data = {"action": "delete_selected", "_selected_action": [self.quiz.pk], "post": "yes"}
+        self.assertEqual(self.client.post(url, data).status_code, 403)
+        self.assertTrue(QuizLink.objects.filter(pk=self.quiz.pk).exists())
+
+    def test_saving_test_does_not_run_selected_quiz_action(self):
+        self.client.force_login(self.superuser)
+        response = self.client.post(reverse("admin:quiz_test_change", args=[self.test.pk]), {
+            "title": "Updated", "academic_year": self.test.academic_year,
+            "duration": "5", "question_timeout": "60", "_save": "Save",
+            "action": "delete_selected", "_selected_action": [self.quiz.pk],
+        })
+        self.assertEqual(response.status_code, 302)
+        self.test.refresh_from_db()
+        self.assertEqual(self.test.title, "Updated")
+        self.assertTrue(QuizLink.objects.filter(pk=self.quiz.pk).exists())
+
+    def test_delete_individual_quiz_preserves_test_and_question(self):
+        self.client.force_login(self.superuser)
+        url = reverse("admin:quiz_quizlink_delete", args=[self.quiz.pk])
+        self.assertEqual(self.client.get(url).status_code, 200)
+        self.assertEqual(self.client.post(url, {"post": "yes"}).status_code, 302)
+        self.assertFalse(QuizLink.objects.filter(pk=self.quiz.pk).exists())
+        self.assertTrue(Test.objects.filter(pk=self.test.pk).exists())
+        self.assertTrue(Question.objects.filter(pk=self.question.pk).exists())
 
     def test_start_button_activates_test(self):
         url = f"/admin/quiz/test/{self.test.pk}/change/"

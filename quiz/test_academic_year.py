@@ -149,6 +149,20 @@ class AcademicYearTests(TestCase):
         quiz = test.quizzes.get()
         self.assertEqual((quiz.student_id, quiz.academic_year), (self.old.pk, "2025_26"))
 
+    def test_bulk_delete_questions_with_related_year_filter(self):
+        question = Question.objects.create(question="Shared", answers=["A"], correct_answer_index=0)
+        other = Question.objects.create(question="Keep", answers=["A"], correct_answer_index=0)
+        for _ in range(2):
+            quiz = QuizLink.objects.create(academic_year="2025_26")
+            QuizQuestion.objects.create(quiz=quiz, question=question, order=1)
+        url = reverse("admin:quiz_question_changelist") + "?academic_year=2025_26"
+        data = {"action": "delete_selected", "_selected_action": [question.pk]}
+        self.assertEqual(self.client.post(url, data).status_code, 200)
+        self.assertEqual(self.client.post(url, {**data, "post": "yes"}).status_code, 302)
+        self.assertFalse(Question.objects.filter(pk=question.pk).exists())
+        self.assertTrue(Question.objects.filter(pk=other.pk).exists())
+        self.assertEqual(QuizLink.objects.count(), 2)
+
     def test_transliterated_bulk_import_stays_in_test_year(self):
         Student.objects.filter(pk__in=[self.old.pk, self.new.pk]).update(name="Балдина Анастасия Сергеевна")
         test = Test.objects.create(academic_year="2025_26", duration=timedelta(minutes=5))

@@ -1,5 +1,10 @@
 {% extends "admin/change_form.html" %}
-{% load i18n %}
+{% load i18n static %}
+
+{% block extrastyle %}
+    {{ block.super }}
+    <link rel="stylesheet" href="{% static 'admin/css/changelists.css' %}">
+{% endblock %}
 
 {% block extrahead %}
     {{ block.super }}
@@ -105,7 +110,13 @@
             <fieldset class="module">
                 <h2>{% trans "Quizzes" %}</h2>
                 <p class="help">{% trans "This table mirrors the Quiz list filtered to this test." %}</p>
-                {% include "admin/quiz/quizlink/quiz_list_table.html" with quizzes=quizzes %}
+                <p class="help">{% trans "Select quizzes and choose Delete selected quiz links to delete them. Deleting this test also deletes all its quizzes, attempts, and feedback." %}</p>
+                <div id="changelist">
+                    <div id="changelist-form">
+                        {% if action_form %}{% include "admin/actions.html" %}{% endif %}
+                        {% include "admin/quiz/quizlink/quiz_list_table.html" with quizzes=quizzes %}
+                    </div>
+                </div>
             </fieldset>
         </div>
     {% elif not has_quizzes %}

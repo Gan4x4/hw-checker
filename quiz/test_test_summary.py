@@ -51,7 +51,7 @@ class TestSummaryTests(TestCase):
             with self.subTest(table=route):
                 response = self.client.get(reverse(f"admin:{route}", args=[self.test.pk]))
                 self.assertEqual(response.context["quizzes"], expected)
-                self.assertRegex(response.content.decode(), r'<thead>\s*<tr>\s*<th scope="col">Student</th>')
+                self.assertRegex(response.content.decode(), r'<thead>\s*<tr>\s*(?:<th[^>]*class="action-checkbox-column"[^>]*>.*?</th>\s*)?<th scope="col">Student</th>')
                 self.assertContains(response, f'<th scope="row"><a href="{reverse("admin:quiz_quizlink_results", args=[expected[0].pk])}">{expected[0].student}</a></th>', html=True)
         response = self.client.get(reverse("admin:quiz_quizlink_changelist"), {"academic_year": "all"})
         self.assertEqual(response.context["cl"].list_display[1], "student")  # After the action checkbox.

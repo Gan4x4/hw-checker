@@ -165,7 +165,10 @@ class AcademicYearFilter(admin.SimpleListFilter):
         return super().value() or default_academic_year()
 
     def queryset(self, request, queryset):
-        return queryset if self.value() == "all" else queryset.filter(**{self.field_path: self.value()}).distinct()
+        if self.value() == "all":
+            return queryset
+        # Match related years without duplicate rows or distinct(), which blocks deletion in Django 4.1.
+        return queryset.filter(pk__in=queryset.filter(**{self.field_path: self.value()}).values("pk"))
 
     def choices(self, changelist):
         choices = list(super().choices(changelist))
@@ -1248,6 +1251,17 @@ class TestAdmin(admin.ModelAdmin):
     def changeform_view(self, request, object_id=None, form_url="", extra_context=None):
         obj = self.get_object(request, object_id) if object_id else None
 
+        if request.method == "POST" and ("index" in request.POST or "post" in request.POST):
+            if obj is None:
+                raise Http404
+            quiz_admin = self.admin_site._registry[QuizLink]
+            if not self.has_change_permission(request, obj) or not quiz_admin.has_delete_permission(request):
+                raise PermissionDenied
+            if request.POST.getlist("action") not in ([""], ["delete_selected"]):
+                return HttpResponseBadRequest(_("Invalid quiz action."))
+            response = quiz_admin.response_action(request, quiz_admin.get_queryset(request).filter(test=obj))
+            return response or redirect("admin:quiz_test_change", obj.pk)
+
         if request.method == "POST" and request.POST.get("_export_links"):
             if not obj:
                 self.message_user(
@@ -1365,6 +1379,17 @@ class TestAdmin(admin.ModelAdmin):
                         quiz.action_buttons = quiz_admin.admin_actions(quiz)
                 finally:
                     _thread_locals.request = None
+                if not extra_context.get("view_only") and self.has_change_permission(request, obj) and quiz_admin.has_delete_permission(request):
+                    action_form = quiz_admin.action_form(auto_id=None)
+                    action_form.fields["action"].choices = [
+                        choice for choice in quiz_admin.get_action_choices(request)
+                        if choice[0] in ("", "delete_selected")
+                    ]
+                    extra_context.update({
+                        "action_form": action_form,
+                        "actions_selection_counter": True,
+                        "cl": {"result_list": quizzes, "result_count": len(quizzes)},
+                    })
             has_quizzes = bool(quizzes)
             can_reset = obj.can_reset()
             extra_context.update(

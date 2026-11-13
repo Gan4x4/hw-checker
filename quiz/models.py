@@ -241,7 +241,7 @@ class QuizLink(models.Model):
         null=True,
         blank=True,
         related_name="quizzes",
-        on_delete=models.SET_NULL,
+        on_delete=models.CASCADE,
     )
     student = models.ForeignKey(
         Student,
