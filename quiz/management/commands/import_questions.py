@@ -134,6 +134,9 @@ def _normalize_payload(payload: Any) -> tuple[str | None, str | None, List[Quest
         question = _question_from_payload(item, entry_index=index)
         question.provenance = {**(_provenance(payload) if isinstance(payload, dict) else {}), **question.provenance}
         questions.append(question)
+    questions = [question for _, question in sorted(
+        zip(questions_data, questions), key=lambda pair: pair[0].get("score", 0), reverse=True
+    )]
 
     if quiz_name and student_name:
         combined = f"{quiz_name} - {student_name}"

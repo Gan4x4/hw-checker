@@ -103,6 +103,25 @@ class TextWrappingTests(SimpleTestCase):
 
 
 class QuizImportTests(TestCase):
+    @override_settings(QUIZ_MAX_QUESTIONS=7)
+    def test_import_orders_by_score_before_limiting(self):
+        for scores, expected in (
+            ([None, 2, 9, 9, -1, 0, 5, 8, None], [2, 3, 7, 6, 1, 0, 5, 8, 4]),
+            ([None] * 9, list(range(9))),
+        ):
+            payload = [
+                {"question": str(index), "answers": ["Yes*", "No"],
+                 **({"score": score} if score is not None else {})}
+                for index, score in enumerate(scores)
+            ]
+            for root in (payload, {"questions": payload}):
+                with self.subTest(scores=scores, wrapped=isinstance(root, dict)):
+                    quiz, _, _ = import_quiz_from_json(json.dumps(root), default_name="scores")
+                    rows = list(quiz.quiz_questions.order_by("order"))
+                    self.assertEqual([row.question.question for row in rows], list(map(str, expected)))
+                    self.assertEqual(list(quiz.ordered_quiz_questions()), rows[:7])
+                    self.assertEqual(quiz.ensure_included_question_ids(), [row.pk for row in rows[:7]])
+
     def test_import_uses_name_and_student_for_title(self):
         payload = {
             "name": "EX1_CIFAR",
